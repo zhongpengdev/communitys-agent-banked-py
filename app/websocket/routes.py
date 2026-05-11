@@ -1,105 +1,121 @@
 """
-WebSocket 路由处理器
+WebSocket 聊天处理器
+使用 Claude Agent SDK 的 AgentSession 替代 LangGraph
 """
 
-from fastapi import WebSocket, WebSocketDisconnect, Query
-from app.websocket.manager import manager
-from app.services.agent_stream import get_agent_response_stream
-from app.database.service.session import create_session, update_session_title
-from app.services.title_generator import generate_title
 import json
 import asyncio
+from fastapi import WebSocket, WebSocketDisconnect
+from app.websocket.manager import manager
+from app.agent.runner import AgentSession
+from app.database.service.session import create_session, update_session_title
+from app.services.title_generator import generate_title
+from app.utils.context import set_request_token
 
 
 async def websocket_chat_handler(
     websocket: WebSocket,
     user_id: str,
-    session_id: int | None = Query(None),
+    token: str,
+    session_id: int | None = None,
     already_accepted: bool = False,
 ):
     """
-    WebSocket 聊天处理器
+    WebSocket 聊天处理器主函数
+
+    生命周期：
+    1. 建立 WebSocket 连接
+    2. 创建并启动 AgentSession（持久化到 WebSocket 断开）
+    3. 循环接收用户消息 → 流式响应 → 保存记录
+    4. 断开时清理 AgentSession
 
     Args:
-        websocket: WebSocket 连接
-        user_id: 已验证的用户 ID
-        session_id: 会话 ID (URL 参数传入)
-        already_accepted: 是否已经 accept 过连接
+        websocket: WebSocket 连接对象
+        user_id: 已通过 JWT 验证的用户 ID
+        token: 原始 JWT token（工具调用时用于 API 鉴权）
+        session_id: 初始会话 ID（可通过消息体动态切换）
+        already_accepted: 连接是否已在上层 accept
     """
-    # 建立连接
     if not already_accepted:
         await manager.connect(websocket, user_id)
     else:
         manager.active_connections[user_id] = websocket
 
+    # 每个 WebSocket 连接独占一个 AgentSession
+    agent = AgentSession(user_id)
+    await agent.start()
+
+    current_session_id = session_id
+
     try:
         while True:
-            # 接收消息
-            data = await websocket.receive_text()
-            message = json.loads(data)
+            raw = await websocket.receive_text()
+            data = json.loads(raw)
 
-            query = message.get("query", "")
-            # 使用消息里的 session_id (支持 camelCase 或 snake_case)
+            query_text = data.get("query", "")
+            # 支持消息体中携带 sessionId 动态切换会话
             current_session_id = (
-                message.get("session_id") or message.get("sessionId") or session_id
+                data.get("session_id") or data.get("sessionId") or current_session_id
             )
 
-            if query:
-                # 1. 自动创建会话逻辑 (如果没传 sessionId)
-                if not current_session_id:
-                    # ✅ 1.1 极速创建会话 (先用默认标题，ms级)
-                    session_res = create_session(user_id, "新对话")
+            if not query_text:
+                continue
 
+            # 每次消息前将 token 注入 contextvars，供 MCP 工具使用
+            set_request_token(token)
+
+            # 若无会话，先自动创建
+            if not current_session_id:
+                try:
+                    session_res = create_session(user_id, "新对话")
                     if session_res.data:
                         current_session_id = session_res.data[0]["id"]
-
-                        # ✅ 1.2 立即通知前端 (前端拿到 ID 可以更新 URL)
-                        await manager.send_message(
-                            user_id,
-                            {
-                                "type": "session_created",
-                                "data": {
-                                    "sessionId": current_session_id,
-                                    "title": "新对话",
-                                },
-                            },
-                        )
-
-                        # ✅ 1.3 后台异步生成真正标题 (不阻塞回复)
+                        await manager.send_message(user_id, {
+                            "type": "session_created",
+                            "data": {"sessionId": current_session_id, "title": "新对话"},
+                        })
                         asyncio.create_task(
-                            _bg_generate_title(current_session_id, query, user_id)
+                            _bg_update_title(current_session_id, query_text, user_id)
                         )
                     else:
-                        await manager.send_error(user_id, "创建会话失败")
+                        await manager.send_error(user_id, "创建会话失败，请稍后重试")
                         continue
+                except Exception as db_err:
+                    print(f"[WebSocket] 数据库错误: {db_err}")
+                    await manager.send_error(user_id, "数据库操作失败，请检查配置")
+                    continue
 
-                # ✅ 2. 立即开始流式响应 (此时已有 sessionId)
-                await get_agent_response_stream(user_id, current_session_id, query)
+            # 调用 Agent 处理消息并流式推送
+            try:
+                await agent.handle_message(current_session_id, query_text)
+            except Exception as agent_err:
+                print(f"[WebSocket] Agent 错误: {agent_err}")
+                await manager.send_error(user_id, f"处理消息时出错: {type(agent_err).__name__}")
+                await manager.send_status(user_id, "completed", {"message": "出错了"})
 
     except WebSocketDisconnect:
         manager.disconnect(user_id)
     except Exception as e:
-        print(f"[WebSocket Error] {e}")
-        await manager.send_error(user_id, f"错误: {str(e)}")
+        import traceback
+        print(f"[WebSocket] 错误: {e}")
+        print(traceback.format_exc())
+        try:
+            await manager.send_error(user_id, f"处理出错: {str(e)}")
+        except Exception:
+            pass
         manager.disconnect(user_id)
+    finally:
+        await agent.stop()
 
 
-async def _bg_generate_title(session_id: int, content: str, user_id: str):
-    """后台任务：生成并更新标题"""
+async def _bg_update_title(session_id: int, content: str, user_id: str):
+    """后台任务：生成会话标题并通知前端"""
     try:
-        # 调用 LLM 生成标题
         new_title = await generate_title(content)
-
-        # 更新数据库
         update_session_title(session_id, new_title)
-
-        # 再次通知前端更新标题
-        await manager.send_message(
-            user_id,
-            {
-                "type": "session_updated",
-                "data": {"sessionId": session_id, "title": new_title},
-            },
-        )
+        await manager.send_message(user_id, {
+            "type": "session_updated",
+            "data": {"sessionId": session_id, "title": new_title},
+        })
     except Exception as e:
-        print(f"后台生成标题失败: {e}")
+        print(f"[WebSocket] 后台生成标题失败: {e}")

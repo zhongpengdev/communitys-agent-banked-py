@@ -8,54 +8,54 @@ router = APIRouter(tags=["对话"])
 
 @router.websocket("/ws/chat")
 async def websocket_chat_endpoint(
-    websocket: WebSocket, session_id: int | None = Query(None)
+    websocket: WebSocket,
+    session_id: int | None = Query(None),
 ):
     """
     WebSocket 聊天端点
 
-    前端发送: { type: 'auth', token: 'xxx' }
+    握手协议：
+    - 客户端首条消息必须为：{ "type": "auth", "token": "<JWT>" }
+    - 服务端返回：{ "type": "auth_success", "user_id": "..." }
+    - 此后双向通信正常消息格式：{ "query": "...", "sessionId": 123 }
     """
     await websocket.accept()
 
     try:
-        # 接收第一条消息（认证消息）
-        data = await websocket.receive_text()
-        message = json.loads(data)
-
-        # 提取 token
-        token = message.get("token", "")
+        # 1. 读取认证消息
+        raw = await websocket.receive_text()
+        auth_msg = json.loads(raw)
+        token = auth_msg.get("token", "")
 
         if not token:
             await websocket.send_json({"type": "error", "content": "缺少 token"})
             await websocket.close()
             return
 
-        # 验证 token
+        # 2. 验证 token
         try:
             user_id = get_user_id(token)
-            # 设置 token 到上下文（供 http_client 使用）
-            from app.utils.context import set_request_token
-
-            set_request_token(token)
         except Exception as e:
-            print(f"验证失败: {e}")
-            await websocket.send_json(
-                {"type": "error", "content": f"Token 验证失败: {str(e)}"}
-            )
+            print(f"[Dialog] Token 验证失败: {e}")
+            await websocket.send_json({"type": "error", "content": f"Token 验证失败: {str(e)}"})
             await websocket.close()
             return
 
-        # 验证成功
+        # 3. 通知前端验证成功
         await websocket.send_json({"type": "auth_success", "user_id": user_id})
 
-        # 处理后续消息（已经 accept 过了）
+        # 4. 进入聊天主循环（连接已 accept，token 传入供工具鉴权使用）
         await websocket_chat_handler(
-            websocket, user_id, session_id, already_accepted=True
+            websocket,
+            user_id=user_id,
+            token=token,
+            session_id=session_id,
+            already_accepted=True,
         )
 
     except Exception as e:
-        print(f"WebSocket 错误: {e}")
+        print(f"[Dialog] WebSocket 错误: {e}")
         try:
             await websocket.close()
-        except:
+        except Exception:
             pass

@@ -1,58 +1,104 @@
-from app.database.client import supabase
+from app.database.client import SessionLocal, SessionModel, DbResult
 
 
 # 分页查询用户的会话历史
 def get_sessions_paginated(user_id: str, page: int = 1, page_size: int = 10):
-    # 计算分页的起始和结束索引
-    # 例如：page=1, page_size=10 -> range(0, 9)
-    #      page=2, page_size=10 -> range(10, 19)
-    start = (page - 1) * page_size
-    end = start + page_size - 1
-
-    return (
-        supabase.table("sessions")
-        .select(
-            "*", count="exact"
-        )  # count="exact" 可以返回总共有多少条数据，方便前端做分页器
-        .eq("user_id", user_id)
-        .order("created_at", desc=True)
-        .range(start, end)
-        .execute()
-    )
+    db = SessionLocal()
+    try:
+        start = (page - 1) * page_size
+        
+        # Count total
+        total_count = db.query(SessionModel).filter(SessionModel.user_id == str(user_id)).count()
+        
+        # Get paginated items
+        sessions = (
+            db.query(SessionModel)
+            .filter(SessionModel.user_id == str(user_id))
+            .order_by(SessionModel.created_at.desc())
+            .offset(start)
+            .limit(page_size)
+            .all()
+        )
+        
+        data = [{
+            "id": s.id,
+            "user_id": s.user_id,
+            "title": s.title,
+            "created_at": s.created_at.isoformat() if s.created_at else None
+        } for s in sessions]
+        
+        return DbResult(data=data, count=total_count)
+    finally:
+        db.close()
 
 
 def create_session(user_id: int, title: str):
-    return (
-        supabase.table("sessions")
-        .insert({"user_id": user_id, "title": title})
-        .execute()
-    )
+    db = SessionLocal()
+    try:
+        new_session = SessionModel(user_id=str(user_id), title=title)
+        db.add(new_session)
+        db.commit()
+        db.refresh(new_session)
+        return DbResult(data=[{
+            "id": new_session.id,
+            "user_id": new_session.user_id,
+            "title": new_session.title,
+            "created_at": new_session.created_at.isoformat() if new_session.created_at else None
+        }])
+    except Exception as e:
+        db.rollback()
+        raise e
+    finally:
+        db.close()
 
 
 def update_session_title(session_id: int, title: str):
     """更新会话标题"""
-    return (
-        supabase.table("sessions")
-        .update({"title": title})
-        .eq("id", session_id)
-        .execute()
-    )
+    db = SessionLocal()
+    try:
+        session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+        if session:
+            session.title = title
+            db.commit()
+            db.refresh(session)
+            return DbResult(data=[{
+                "id": session.id,
+                "title": session.title
+            }])
+        return DbResult(data=[])
+    except Exception as e:
+        db.rollback()
+        raise e
+    finally:
+        db.close()
 
 
 def check_session_owner(session_id: int, user_id: str):
     """检查会话是否属于用户"""
-    res = (
-        supabase.table("sessions")
-        .select("id")
-        .eq("id", session_id)
-        .eq("user_id", user_id)
-        .execute()
-    )
-    return len(res.data) > 0
+    db = SessionLocal()
+    try:
+        session = (
+            db.query(SessionModel)
+            .filter(SessionModel.id == session_id, SessionModel.user_id == str(user_id))
+            .first()
+        )
+        return session is not None
+    finally:
+        db.close()
 
 
 # 删除会话
 def delete_session_service(session_id: int):
-    res = supabase.table("sessions").delete().eq("id", session_id).execute()
-
-    return len(res.data) > 0
+    db = SessionLocal()
+    try:
+        session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+        if session:
+            db.delete(session)
+            db.commit()
+            return True
+        return False
+    except Exception as e:
+        db.rollback()
+        raise e
+    finally:
+        db.close()

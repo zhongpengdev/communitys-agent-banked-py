@@ -3,3 +3,4 @@ __pycache__
 test
 guidence
 .env
+.pytest_cache/
