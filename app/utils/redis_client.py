@@ -51,6 +51,8 @@ class RedisMemoryManager:
         async with redis_client.pipeline(transaction=True) as pipe:
             pipe.rpush(key, payload)
             pipe.ltrim(key, -10, -1)  # 保留最近的 10 条对话
+            
+            pipe.expire(key, 1800) # 半小时过期一次
             await pipe.execute()
             
     @classmethod
