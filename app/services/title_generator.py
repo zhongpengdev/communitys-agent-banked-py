@@ -6,7 +6,7 @@
 import os
 from anthropic import AsyncAnthropic
 
-CLAUDE_TITLE_MODEL = os.getenv("CLAUDE_TITLE_MODEL", "claude-haiku-4-5-20251001")
+CLAUDE_TITLE_MODEL = os.getenv("CLAUDE_TITLE_MODEL")
 
 _client = AsyncAnthropic(
     base_url=os.getenv("ANTHROPIC_BASE_URL") or None,
