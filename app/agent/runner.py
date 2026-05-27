@@ -18,8 +18,9 @@ from app.websocket.manager import manager
 from app.tools_mcp.server import community_server
 from app.tools.tool_metadata import get_tool_display_info
 from app.database.service.message import save_message, get_messages
+from app.utils.redis_client import RedisMemoryManager 
 
-CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "deepseek-v4-flash")
 
 
 # 所有 MCP 工具的全限定名，格式：mcp__<server>__<tool>
@@ -77,8 +78,8 @@ class AgentSession:
         2. 流式将响应推送到 WebSocket
         3. 异步保存消息到数据库
         """
-        # 加载历史对话（最近 10 条）作为上下文注入
-        history_ctx = _build_history_context(session_id)
+        # 加载历史对话
+        history_ctx = await _build_history_context(session_id)
         prompt = f"{history_ctx}用户: {user_input}" if history_ctx else user_input
 
         await manager.send_status(self.user_id, "thinking", {"message": "正在思考..."})
@@ -153,26 +154,66 @@ def _strip_mcp_prefix(name: str) -> str:
     parts = name.split("__")
     return parts[-1] if len(parts) >= 3 else name
 
-
-def _build_history_context(session_id: int) -> str:
-    """从数据库加载最近 10 条消息，构建历史上下文字符串"""
+async def _build_history_context(session_id: int) -> str:
+    """
+    【重构优化】：先从 Redis 缓存中读取最近的 10 条，若没有缓存则降级请求数据库，并反写回缓存。
+    """
     try:
-        res = get_messages(session_id)
+        # 【fix】：get_message 是异步协程，必须加上 await，否则获取到的是 coroutine 对象
+        cached_msgs = await RedisMemoryManager.get_message(session_id)
+        
+        # 缓存命中
+        if cached_msgs:
+            lines = []
+            for msg in cached_msgs:
+                role = "用户" if msg["role"] == "user" else "社区助手"
+                lines.append(f"{role}: {msg['content']}")
+            # 【fix】：return 语句必须在 for 循环外面，否则第一次循环就直接返回了，只加载了一条历史消息！
+            return "以下是用户和社区助手之前的历史对话：\n" + "\n".join(lines) + "\n\n"
+                
+        # 降级策略：缓存未命中，从冷数据库备份加载
+        from app.database.service.message import get_recent_messages
+        
+        res = get_recent_messages(session_id)
         if not res.data:
             return ""
+        
         lines = []
-        for msg in res.data[-10:]:
-            role = "用户" if msg["role"] == "user" else "助手"
+        for msg in res.data:
+            role = "用户" if msg["role"] == "user" else "社区助手"
             lines.append(f"{role}: {msg['content']}")
-        return "以下是之前的对话记录：\n" + "\n".join(lines) + "\n\n"
+            
+            # 【fix】：在循环外 return，在此循环内将所有 10 条老消息写回 Redis 缓存
+            await RedisMemoryManager.push_message(session_id, msg["role"], msg["content"])
+            
+        # 【fix】：return 必须在循环外部！
+        return "以下是用户和社区助手之前的历史对话：\n" + "\n".join(lines) + "\n\n"
     except Exception as e:
         print(f"[Runner] 加载历史消息失败: {e}")
         return ""
 
 
 async def _save(session_id: int, user_input: str, response: str):
+    """
+    【重构优化】：数据产生时，先即时写 Redis 保证记忆衔接，再发起低优先级异步任务落盘冷备。
+    """
+    try:
+        # 立即写入极速缓存，保证下一秒收到新提问时，记忆完美衔接
+        await RedisMemoryManager.push_message(session_id, "user", user_input)
+        await RedisMemoryManager.push_message(session_id, "assistant", response)
+        
+        # 异步将数据落盘冷备归档
+        # save_message 内部是阻塞的 SQLAlchemy IO，我们使用 asyncio.to_thread 使其异步执行，防止阻塞 FastAPI 主事件循环
+        await asyncio.to_thread(_save_to_db, session_id, user_input, response)
+    except Exception as e:
+        print(f"[Runner] 保存消息到记忆库失败: {e}")
+
+
+def _save_to_db(session_id: int, user_input: str, response: str):
+    """同步数据库落盘包装"""
     try:
         save_message(session_id=session_id, role="user", content=user_input)
         save_message(session_id=session_id, role="assistant", content=response)
     except Exception as e:
-        print(f"[Runner] 保存消息失败: {e}")
+        print(f"[Runner] 后台落盘数据库失败: {e}")
+

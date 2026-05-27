@@ -45,6 +45,34 @@ def get_messages(session_id: int):
     finally:
         db.close()
 
+# 获取用户的10条历史对话用于热记忆
+def get_recent_messages(session_id: int, limit: int = 10):
+    """
+    倒叙索引最后的10条
+    """
+    db = SessionLocal()
+    try:
+        messages = (
+            db.query(MessageModel)
+            .filter(MessageModel.session_id == session_id)
+            .order_by(MessageModel.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+        
+        # 得到正确的data序列
+        messages.reverse()
+        
+        data = [{
+            "id": msg.id,
+            "session_id": msg.session_id,
+            "role": msg.role,
+            "content": msg.content,
+            "create_at": msg.created_at.isoformat() if msg.created_at else None
+        } for msg in messages]
+        return DbResult(data=data)
+    finally:
+        db.close()
 
 # 删除session_id的所有消息
 def delete_messages(session_id: int):
