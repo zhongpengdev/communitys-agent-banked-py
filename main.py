@@ -6,10 +6,18 @@ from app.api.session import router as session_router
 from app.api.dialog import router as dialog_router
 from app.api.tools import router as tools_router
 from app.api.message import router as message_router
-
+from app.utils.http_client import HttpClientManager
+from contextlib import asynccontextmanager
 load_dotenv()
 
-app = FastAPI(title="Community Agent API")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await HttpClientManager.init_session()
+    yield
+    
+    await HttpClientManager.close_session()
+
+app = FastAPI(title="Community Agent API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
