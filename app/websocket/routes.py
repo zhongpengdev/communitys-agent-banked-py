@@ -7,7 +7,6 @@ import json
 import asyncio
 from fastapi import WebSocket, WebSocketDisconnect
 from app.websocket.manager import manager
-from app.agent.runner import AgentSession
 from app.database.service.session import create_session, update_session_title
 from app.services.title_generator import generate_title
 from app.utils.context import set_request_token
@@ -42,6 +41,8 @@ async def websocket_chat_handler(
         manager.active_connections[user_id] = websocket
 
     # 每个 WebSocket 连接独占一个 AgentSession
+    # 【修复循环导入】：将导入移到函数内部
+    from app.agent.runner import AgentSession
     agent = AgentSession(user_id)
     await agent.start()
 
