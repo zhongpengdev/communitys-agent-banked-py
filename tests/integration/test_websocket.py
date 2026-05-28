@@ -56,7 +56,7 @@ def test_websocket_auth_success_sends_auth_success(client):
     mock_agent.stop = AsyncMock()
     mock_agent.handle_message = AsyncMock()
 
-    with patch("app.websocket.routes.AgentSession", return_value=mock_agent), \
+    with patch("app.agent.runner.AgentSession", return_value=mock_agent), \
          patch("app.websocket.routes.manager") as mock_manager:
         mock_manager.active_connections = {}
         mock_manager.send_message = AsyncMock()
@@ -84,7 +84,7 @@ def test_websocket_message_calls_handle_message(client):
     mock_session_result = MagicMock()
     mock_session_result.data = [{"id": 10}]
 
-    with patch("app.websocket.routes.AgentSession", return_value=mock_agent), \
+    with patch("app.agent.runner.AgentSession", return_value=mock_agent), \
          patch("app.websocket.routes.create_session", return_value=mock_session_result), \
          patch("app.websocket.routes.manager") as mock_manager:
         mock_manager.active_connections = {}
@@ -113,7 +113,7 @@ def test_websocket_empty_query_is_ignored(client):
     mock_agent.stop = AsyncMock()
     mock_agent.handle_message = AsyncMock()
 
-    with patch("app.websocket.routes.AgentSession", return_value=mock_agent), \
+    with patch("app.agent.runner.AgentSession", return_value=mock_agent), \
          patch("app.websocket.routes.manager") as mock_manager:
         mock_manager.active_connections = {}
         mock_manager.send_message = AsyncMock()
@@ -142,7 +142,7 @@ def test_websocket_auto_creates_session_when_missing(client):
     mock_session_result = MagicMock()
     mock_session_result.data = [{"id": 99}]
 
-    with patch("app.websocket.routes.AgentSession", return_value=mock_agent), \
+    with patch("app.agent.runner.AgentSession", return_value=mock_agent), \
          patch("app.websocket.routes.create_session", return_value=mock_session_result) as mock_create, \
          patch("app.websocket.routes.generate_title", new_callable=AsyncMock, return_value="新标题"), \
          patch("app.websocket.routes.manager") as mock_manager:

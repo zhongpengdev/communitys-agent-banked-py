@@ -1,29 +1,38 @@
-"""Unit tests for all 16 MCP tools in app/tools_mcp/server.py"""
+"""Unit tests for all 16 MCP tools"""
 
 import pytest
 import json
 from unittest.mock import patch, AsyncMock, MagicMock
-from app.tools_mcp.server import (
-    get_time,
-    get_weather,
+
+# 导入底层共享辅助方法
+from app.tools_mcp.base import (
+    _auth_headers,
+    ok_response as _ok,
+    error_response as _err,
+)
+
+# 从各自的模块导入工具函数
+from app.tools_mcp.modules.system import get_time, get_weather
+from app.tools_mcp.modules.community import (
     query_unpaid_bills,
     get_user_notifications,
     read_notification,
     send_private_messages,
     create_visitor,
     search_goods,
+)
+from app.tools_mcp.modules.email import (
     send_scheduled_email,
     get_scheduled_email,
     delete_scheduled_email,
+)
+from app.tools_mcp.modules.search import (
     web_search,
     wikipedia_search,
     toutiao_hot_news,
     search_domains_info,
-    generate_image_from_text,
-    _ok,
-    _err,
-    _auth_headers,
 )
+from app.tools_mcp.modules.media import generate_image_from_text
 from app.utils.context import set_request_token
 
 
@@ -59,13 +68,13 @@ def test_err_returns_error_json():
 def test_auth_headers_with_token():
     set_request_token("my-jwt")
     headers = _auth_headers()
-    assert headers == {"Authorization": "Bearer my-jwt"}
+    assert headers == {"Authorization": "Bearer my-jwt", "Connection": "keep-alive"}
 
 
 def test_auth_headers_without_token():
     set_request_token(None)
     headers = _auth_headers()
-    assert headers == {}
+    assert headers == {"Connection": "keep-alive"}
 
 
 # ── get_time ──────────────────────────────────────────────────────────────────
@@ -79,9 +88,9 @@ async def test_get_time_returns_formatted_datetime():
 
 # ── get_weather ───────────────────────────────────────────────────────────────
 
-@patch("app.tools_mcp.server._get")
-@patch("app.tools_mcp.server.aiohttp.ClientSession")
-async def test_get_weather_with_city(mock_session_cls, mock_get):
+@patch("app.tools_mcp.base.http_get")
+@patch("app.utils.http_client.HttpClientManager.get_session")
+async def test_get_weather_with_city(mock_get_session, mock_get):
     mock_response = AsyncMock()
     mock_response.__aenter__ = AsyncMock(return_value=mock_response)
     mock_response.__aexit__ = AsyncMock(return_value=None)
@@ -91,18 +100,18 @@ async def test_get_weather_with_city(mock_session_cls, mock_get):
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=None)
     mock_session.get = MagicMock(return_value=mock_response)
-    mock_session_cls.return_value = mock_session
+    mock_get_session.return_value = mock_session
 
     result = await get_weather({"city": "Beijing"})
     text = _parse_result(result)
     assert "sunny" in text or "Beijing" in text
 
 
-@patch("app.tools_mcp.server._get")
+@patch("app.tools_mcp.base.http_get")
 async def test_get_weather_without_city_uses_ip(mock_get):
     mock_get.return_value = {"data": "1.2.3.4"}
 
-    with patch("app.tools_mcp.server.aiohttp.ClientSession") as mock_cls:
+    with patch("app.utils.http_client.HttpClientManager.get_session") as mock_get_session:
         mock_resp = AsyncMock()
         mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
         mock_resp.__aexit__ = AsyncMock(return_value=None)
@@ -115,15 +124,15 @@ async def test_get_weather_without_city_uses_ip(mock_get):
         mock_sess.__aenter__ = AsyncMock(return_value=mock_sess)
         mock_sess.__aexit__ = AsyncMock(return_value=None)
         mock_sess.get = MagicMock(return_value=mock_resp)
-        mock_cls.return_value = mock_sess
+        mock_get_session.return_value = mock_sess
 
         result = await get_weather({})
     assert "content" in result
 
 
-@patch("app.tools_mcp.server.aiohttp.ClientSession")
-async def test_get_weather_returns_error_on_failure(mock_session_cls):
-    mock_session_cls.side_effect = Exception("network error")
+@patch("app.utils.http_client.HttpClientManager.get_session")
+async def test_get_weather_returns_error_on_failure(mock_get_session):
+    mock_get_session.side_effect = Exception("network error")
     result = await get_weather({"city": "Shanghai"})
     text = _parse_result(result)
     data = json.loads(text)
@@ -132,7 +141,7 @@ async def test_get_weather_returns_error_on_failure(mock_session_cls):
 
 # ── query_unpaid_bills ────────────────────────────────────────────────────────
 
-@patch("app.tools_mcp.server._get")
+@patch("app.tools_mcp.base.http_get")
 async def test_query_unpaid_bills_success(mock_get):
     mock_get.return_value = {"data": [{"id": 1, "amount": 100}]}
     result = await query_unpaid_bills({"status": 0})
@@ -140,14 +149,14 @@ async def test_query_unpaid_bills_success(mock_get):
     assert "100" in text
 
 
-@patch("app.tools_mcp.server._get")
+@patch("app.tools_mcp.base.http_get")
 async def test_query_unpaid_bills_default_status(mock_get):
     mock_get.return_value = {"data": []}
     await query_unpaid_bills({})
     mock_get.assert_called_once_with("/api/property-fee/bills", {"status": 0})
 
 
-@patch("app.tools_mcp.server._get")
+@patch("app.tools_mcp.base.http_get")
 async def test_query_unpaid_bills_error(mock_get):
     mock_get.side_effect = Exception("timeout")
     result = await query_unpaid_bills({})
@@ -157,14 +166,14 @@ async def test_query_unpaid_bills_error(mock_get):
 
 # ── get_user_notifications ────────────────────────────────────────────────────
 
-@patch("app.tools_mcp.server._get")
+@patch("app.tools_mcp.base.http_get")
 async def test_get_user_notifications_success(mock_get):
     mock_get.return_value = {"data": [{"id": 1, "content": "公告"}]}
     result = await get_user_notifications({"pageNum": 0, "pageSize": 10})
     assert "content" in result
 
 
-@patch("app.tools_mcp.server._get")
+@patch("app.tools_mcp.base.http_get")
 async def test_get_user_notifications_default_params(mock_get):
     mock_get.return_value = {"data": []}
     await get_user_notifications({})
@@ -173,7 +182,7 @@ async def test_get_user_notifications_default_params(mock_get):
     )
 
 
-@patch("app.tools_mcp.server._get")
+@patch("app.tools_mcp.base.http_get")
 async def test_get_user_notifications_error(mock_get):
     mock_get.side_effect = Exception("error")
     result = await get_user_notifications({})
@@ -183,7 +192,7 @@ async def test_get_user_notifications_error(mock_get):
 
 # ── read_notification ─────────────────────────────────────────────────────────
 
-@patch("app.tools_mcp.server._post")
+@patch("app.tools_mcp.base.http_post")
 async def test_read_notification_success(mock_post):
     mock_post.return_value = {"success": True}
     result = await read_notification({"notificationId": "notif-abc"})
@@ -191,7 +200,7 @@ async def test_read_notification_success(mock_post):
     assert "content" in result
 
 
-@patch("app.tools_mcp.server._post")
+@patch("app.tools_mcp.base.http_post")
 async def test_read_notification_error(mock_post):
     mock_post.side_effect = Exception("404")
     result = await read_notification({"notificationId": "x"})
@@ -201,7 +210,7 @@ async def test_read_notification_error(mock_post):
 
 # ── send_private_messages ─────────────────────────────────────────────────────
 
-@patch("app.tools_mcp.server._post")
+@patch("app.tools_mcp.base.http_post")
 async def test_send_private_messages_success(mock_post):
     mock_post.return_value = {"success": True}
     result = await send_private_messages({"content": "你好", "toUserId": "user-99"})
@@ -211,7 +220,7 @@ async def test_send_private_messages_success(mock_post):
     assert "content" in result
 
 
-@patch("app.tools_mcp.server._post")
+@patch("app.tools_mcp.base.http_post")
 async def test_send_private_messages_error(mock_post):
     mock_post.side_effect = Exception("failed")
     result = await send_private_messages({"content": "hi", "toUserId": "u"})
@@ -221,7 +230,7 @@ async def test_send_private_messages_error(mock_post):
 
 # ── create_visitor ────────────────────────────────────────────────────────────
 
-@patch("app.tools_mcp.server._post")
+@patch("app.tools_mcp.base.http_post")
 async def test_create_visitor_success(mock_post):
     mock_post.return_value = {"success": True, "visitorId": "v-123"}
     args = {
@@ -242,7 +251,7 @@ async def test_create_visitor_success(mock_post):
     assert "content" in result
 
 
-@patch("app.tools_mcp.server._post")
+@patch("app.tools_mcp.base.http_post")
 async def test_create_visitor_error(mock_post):
     mock_post.side_effect = Exception("validation error")
     result = await create_visitor({
@@ -255,14 +264,14 @@ async def test_create_visitor_error(mock_post):
 
 # ── search_goods ──────────────────────────────────────────────────────────────
 
-@patch("app.tools_mcp.server._post")
+@patch("app.tools_mcp.base.http_post")
 async def test_search_goods_success(mock_post):
     mock_post.return_value = {"data": [{"name": "苹果", "price": 5.0}]}
     result = await search_goods({"keyword": "苹果", "category_id": 0, "page_num": 1, "page_size": 10})
     assert "content" in result
 
 
-@patch("app.tools_mcp.server._post")
+@patch("app.tools_mcp.base.http_post")
 async def test_search_goods_uses_defaults(mock_post):
     mock_post.return_value = {"data": []}
     await search_goods({"keyword": "test"})
@@ -271,7 +280,7 @@ async def test_search_goods_uses_defaults(mock_post):
     })
 
 
-@patch("app.tools_mcp.server._post")
+@patch("app.tools_mcp.base.http_post")
 async def test_search_goods_error(mock_post):
     mock_post.side_effect = Exception("error")
     result = await search_goods({})
@@ -281,7 +290,7 @@ async def test_search_goods_error(mock_post):
 
 # ── send_scheduled_email ──────────────────────────────────────────────────────
 
-@patch("app.tools_mcp.server._post")
+@patch("app.tools_mcp.base.http_post")
 async def test_send_scheduled_email_success(mock_post):
     mock_post.return_value = {"id": "email-1"}
     result = await send_scheduled_email({
@@ -299,7 +308,7 @@ async def test_send_scheduled_email_success(mock_post):
     assert "content" in result
 
 
-@patch("app.tools_mcp.server._post")
+@patch("app.tools_mcp.base.http_post")
 async def test_send_scheduled_email_default_html_false(mock_post):
     mock_post.return_value = {}
     await send_scheduled_email({
@@ -309,7 +318,7 @@ async def test_send_scheduled_email_default_html_false(mock_post):
     assert sent["isHtml"] is False
 
 
-@patch("app.tools_mcp.server._post")
+@patch("app.tools_mcp.base.http_post")
 async def test_send_scheduled_email_error(mock_post):
     mock_post.side_effect = Exception("fail")
     result = await send_scheduled_email({"subject": "s", "content": "c", "scheduledTime": "t"})
@@ -319,7 +328,7 @@ async def test_send_scheduled_email_error(mock_post):
 
 # ── get_scheduled_email ───────────────────────────────────────────────────────
 
-@patch("app.tools_mcp.server._get")
+@patch("app.tools_mcp.base.http_get")
 async def test_get_scheduled_email_success(mock_get):
     mock_get.return_value = {"data": [{"id": "e1"}]}
     result = await get_scheduled_email({"pageNum": 0, "pageSize": 10})
@@ -327,7 +336,7 @@ async def test_get_scheduled_email_success(mock_get):
     assert "content" in result
 
 
-@patch("app.tools_mcp.server._get")
+@patch("app.tools_mcp.base.http_get")
 async def test_get_scheduled_email_error(mock_get):
     mock_get.side_effect = Exception("error")
     result = await get_scheduled_email({})
@@ -337,7 +346,7 @@ async def test_get_scheduled_email_error(mock_get):
 
 # ── delete_scheduled_email ────────────────────────────────────────────────────
 
-@patch("app.tools_mcp.server._delete")
+@patch("app.tools_mcp.base.http_delete")
 async def test_delete_scheduled_email_success(mock_delete):
     mock_delete.return_value = {"success": True}
     result = await delete_scheduled_email({"id": "email-42"})
@@ -345,7 +354,7 @@ async def test_delete_scheduled_email_success(mock_delete):
     assert "content" in result
 
 
-@patch("app.tools_mcp.server._delete")
+@patch("app.tools_mcp.base.http_delete")
 async def test_delete_scheduled_email_error(mock_delete):
     mock_delete.side_effect = Exception("not found")
     result = await delete_scheduled_email({"id": "bad-id"})
@@ -356,14 +365,14 @@ async def test_delete_scheduled_email_error(mock_delete):
 # ── web_search ────────────────────────────────────────────────────────────────
 
 async def test_web_search_no_serp_key():
-    with patch("app.tools_mcp.server.SERP_KEY", ""):
+    with patch("app.tools_mcp.base.SERP_KEY", ""):
         result = await web_search({"query": "python"})
     data = json.loads(_parse_result(result))
     assert data["success"] is False
     assert "SERP_KEY" in data["message"]
 
 
-@patch("app.tools_mcp.server.aiohttp.ClientSession")
+@patch("app.tools_mcp.modules.search.aiohttp.ClientSession")
 async def test_web_search_with_organic_results(mock_session_cls):
     api_resp = {
         "organic_results": [
@@ -381,17 +390,17 @@ async def test_web_search_with_organic_results(mock_session_cls):
     mock_sess.get = MagicMock(return_value=mock_resp)
     mock_session_cls.return_value = mock_sess
 
-    with patch("app.tools_mcp.server.SERP_KEY", "fake-key"):
+    with patch("app.tools_mcp.base.SERP_KEY", "fake-key"):
         result = await web_search({"query": "python"})
 
     text = _parse_result(result)
     assert "Python官网" in text
 
 
-@patch("app.tools_mcp.server.aiohttp.ClientSession")
+@patch("app.tools_mcp.modules.search.aiohttp.ClientSession")
 async def test_web_search_error_returns_err(mock_session_cls):
     mock_session_cls.side_effect = Exception("network error")
-    with patch("app.tools_mcp.server.SERP_KEY", "fake-key"):
+    with patch("app.tools_mcp.base.SERP_KEY", "fake-key"):
         result = await web_search({"query": "test"})
     data = json.loads(_parse_result(result))
     assert data["success"] is False
@@ -399,7 +408,7 @@ async def test_web_search_error_returns_err(mock_session_cls):
 
 # ── wikipedia_search ──────────────────────────────────────────────────────────
 
-@patch("app.tools_mcp.server.aiohttp.ClientSession")
+@patch("app.tools_mcp.modules.search.aiohttp.ClientSession")
 async def test_wikipedia_search_success(mock_session_cls):
     search_resp = {"query": {"search": [{"title": "Python (programming language)"}]}}
     detail_resp = {
@@ -429,7 +438,7 @@ async def test_wikipedia_search_success(mock_session_cls):
     assert "Python" in text
 
 
-@patch("app.tools_mcp.server.aiohttp.ClientSession")
+@patch("app.tools_mcp.modules.search.aiohttp.ClientSession")
 async def test_wikipedia_search_no_results(mock_session_cls):
     mock_resp = AsyncMock()
     mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
@@ -447,7 +456,7 @@ async def test_wikipedia_search_no_results(mock_session_cls):
     assert "未找到" in text
 
 
-@patch("app.tools_mcp.server.aiohttp.ClientSession")
+@patch("app.tools_mcp.modules.search.aiohttp.ClientSession")
 async def test_wikipedia_search_error(mock_session_cls):
     mock_session_cls.side_effect = Exception("network error")
     result = await wikipedia_search({"query": "test"})
@@ -457,7 +466,7 @@ async def test_wikipedia_search_error(mock_session_cls):
 
 # ── toutiao_hot_news ──────────────────────────────────────────────────────────
 
-@patch("app.tools_mcp.server.aiohttp.ClientSession")
+@patch("app.tools_mcp.modules.search.aiohttp.ClientSession")
 async def test_toutiao_hot_news_success(mock_session_cls):
     news_data = {
         "data": [
@@ -482,7 +491,7 @@ async def test_toutiao_hot_news_success(mock_session_cls):
     assert "新闻标题2" in text
 
 
-@patch("app.tools_mcp.server.aiohttp.ClientSession")
+@patch("app.tools_mcp.modules.search.aiohttp.ClientSession")
 async def test_toutiao_hot_news_error(mock_session_cls):
     mock_session_cls.side_effect = Exception("fail")
     result = await toutiao_hot_news({})
@@ -493,14 +502,14 @@ async def test_toutiao_hot_news_error(mock_session_cls):
 # ── search_domains_info ───────────────────────────────────────────────────────
 
 async def test_search_domains_info_no_key():
-    with patch("app.tools_mcp.server.DOMAINSDB_KEY", ""):
+    with patch("app.tools_mcp.base.DOMAINSDB_KEY", ""):
         result = await search_domains_info({"query": "example.com"})
     data = json.loads(_parse_result(result))
     assert data["success"] is False
     assert "DOMAINSDB_KEY" in data["message"]
 
 
-@patch("app.tools_mcp.server.aiohttp.ClientSession")
+@patch("app.tools_mcp.modules.search.aiohttp.ClientSession")
 async def test_search_domains_info_success(mock_session_cls):
     domain_data = {
         "total": 1,
@@ -517,7 +526,7 @@ async def test_search_domains_info_success(mock_session_cls):
     mock_sess.get = MagicMock(return_value=mock_resp)
     mock_session_cls.return_value = mock_sess
 
-    with patch("app.tools_mcp.server.DOMAINSDB_KEY", "fake-key"):
+    with patch("app.tools_mcp.base.DOMAINSDB_KEY", "fake-key"):
         result = await search_domains_info({"query": "example.com", "limit": 10})
     text = _parse_result(result)
     assert "example.com" in text
@@ -526,17 +535,17 @@ async def test_search_domains_info_success(mock_session_cls):
 # ── generate_image_from_text ──────────────────────────────────────────────────
 
 async def test_generate_image_no_config():
-    with patch("app.tools_mcp.server.API_KEY", ""), \
-         patch("app.tools_mcp.server.QWEN_CREATE_URL", ""), \
-         patch("app.tools_mcp.server.QWEN_GET_URL", ""):
+    with patch("app.tools_mcp.modules.media.API_KEY", ""), \
+         patch("app.tools_mcp.modules.media.QWEN_CREATE_URL", ""), \
+         patch("app.tools_mcp.modules.media.QWEN_GET_URL", ""):
         result = await generate_image_from_text({"prompt": "a cat"})
     data = json.loads(_parse_result(result))
     assert data["success"] is False
     assert "未配置" in data["message"]
 
 
-@patch("app.tools_mcp.server.asyncio.sleep", new_callable=AsyncMock)
-@patch("app.tools_mcp.server.aiohttp.ClientSession")
+@patch("app.tools_mcp.modules.media.asyncio.sleep", new_callable=AsyncMock)
+@patch("app.tools_mcp.modules.media.aiohttp.ClientSession")
 async def test_generate_image_success(mock_session_cls, mock_sleep):
     create_resp = {"output": {"task_id": "task-001"}}
     check_resp = {
@@ -570,9 +579,9 @@ async def test_generate_image_success(mock_session_cls, mock_sleep):
     mock_sess.get = MagicMock(return_value=mock_get_resp)
     mock_session_cls.return_value = mock_sess
 
-    with patch("app.tools_mcp.server.API_KEY", "key"), \
-         patch("app.tools_mcp.server.QWEN_CREATE_URL", "http://create"), \
-         patch("app.tools_mcp.server.QWEN_GET_URL", "http://get"):
+    with patch("app.tools_mcp.modules.media.API_KEY", "key"), \
+         patch("app.tools_mcp.modules.media.QWEN_CREATE_URL", "http://create"), \
+         patch("app.tools_mcp.modules.media.QWEN_GET_URL", "http://get"):
         result = await generate_image_from_text({"prompt": "a cat", "size": "1024*1024", "n": 1})
 
     data = json.loads(_parse_result(result))
@@ -580,7 +589,7 @@ async def test_generate_image_success(mock_session_cls, mock_sleep):
     assert len(data["images"]) == 1
 
 
-@patch("app.tools_mcp.server.aiohttp.ClientSession")
+@patch("app.tools_mcp.modules.media.aiohttp.ClientSession")
 async def test_generate_image_no_task_id_returns_error(mock_session_cls):
     mock_resp = AsyncMock()
     mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
@@ -593,9 +602,9 @@ async def test_generate_image_no_task_id_returns_error(mock_session_cls):
     mock_sess.post = MagicMock(return_value=mock_resp)
     mock_session_cls.return_value = mock_sess
 
-    with patch("app.tools_mcp.server.API_KEY", "key"), \
-         patch("app.tools_mcp.server.QWEN_CREATE_URL", "http://create"), \
-         patch("app.tools_mcp.server.QWEN_GET_URL", "http://get"):
+    with patch("app.tools_mcp.modules.media.API_KEY", "key"), \
+         patch("app.tools_mcp.modules.media.QWEN_CREATE_URL", "http://create"), \
+         patch("app.tools_mcp.modules.media.QWEN_GET_URL", "http://get"):
         result = await generate_image_from_text({"prompt": "a cat"})
 
     data = json.loads(_parse_result(result))
