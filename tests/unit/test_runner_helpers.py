@@ -48,8 +48,8 @@ async def test_build_history_context_returns_empty_when_no_data(mock_get_recent_
 @pytest.mark.asyncio
 @patch("app.agent.runner.RedisMemoryManager.get_message")
 @patch("app.database.service.message.get_recent_messages")
-@patch("app.agent.runner.RedisMemoryManager.push_message")
-async def test_build_history_context_formats_messages(mock_redis_push, mock_get_recent_messages, mock_redis_get):
+@patch("app.agent.runner.RedisMemoryManager.push_messages_batch")
+async def test_build_history_context_formats_messages(mock_redis_batch, mock_get_recent_messages, mock_redis_get):
     # Mock Redis to return empty list
     mock_redis_get.return_value = []
     
@@ -65,7 +65,8 @@ async def test_build_history_context_formats_messages(mock_redis_push, mock_get_
     assert "用户: 你好" in result
     assert "社区助手: 你好！有什么可以帮助你？" in result
     assert "以下是用户和社区助手之前的历史对话：" in result
-    assert mock_redis_push.call_count == 2
+    assert mock_redis_batch.call_count == 1
+    mock_redis_batch.assert_called_once_with(1, mock_result.data)
 
 
 @pytest.mark.asyncio
