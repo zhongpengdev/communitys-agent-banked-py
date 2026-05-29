@@ -183,10 +183,8 @@ async def _build_history_context(session_id: int) -> str:
             role = "用户" if msg["role"] == "user" else "社区助手"
             lines.append(f"{role}: {msg['content']}")
             
-            # 【fix】：在循环外 return，在此循环内将所有 10 条老消息写回 Redis 缓存
-            await RedisMemoryManager.push_message(session_id, msg["role"], msg["content"])
+        await RedisMemoryManager.push_messages_batch(session_id, res.data)
             
-        # 【fix】：return 必须在循环外部！
         return "以下是用户和社区助手之前的历史对话：\n" + "\n".join(lines) + "\n\n"
     except Exception as e:
         print(f"[Runner] 加载历史消息失败: {e}")
