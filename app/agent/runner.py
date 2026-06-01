@@ -19,7 +19,7 @@ from app.tools_mcp.server import community_server
 from app.tools.tool_metadata import get_tool_display_info
 from app.database.service.message import save_message, get_messages
 from app.core.config import settings
-from app.utils.redis_client import RedisMemoryManager
+from app.services.memory import RedisMemoryManager
 
 CLAUDE_MODEL = settings.claude_model
 
