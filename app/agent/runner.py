@@ -18,9 +18,10 @@ from app.websocket.manager import manager
 from app.tools_mcp.server import community_server
 from app.tools.tool_metadata import get_tool_display_info
 from app.database.service.message import save_message, get_messages
-from app.utils.redis_client import RedisMemoryManager 
+from app.core.config import settings
+from app.utils.redis_client import RedisMemoryManager
 
-CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "deepseek-v4-flash")
+CLAUDE_MODEL = settings.claude_model
 
 
 # 所有 MCP 工具的全限定名，格式：mcp__<server>__<tool>
@@ -53,6 +54,7 @@ class AgentSession:
     def __init__(self, user_id: str):
         self.user_id = user_id
         self._client: ClaudeSDKClient | None = None
+        self._history_seeded = False
 
     async def start(self):
         """建立与 Claude Agent SDK 的连接"""
@@ -79,8 +81,12 @@ class AgentSession:
         3. 异步保存消息到数据库
         """
         # 加载历史对话
-        history_ctx = await _build_history_context(session_id)
-        prompt = f"{history_ctx}用户: {user_input}" if history_ctx else user_input
+        if not self._history_seeded:
+            history_ctx = await _build_history_context(session_id)
+            prompt = f"{history_ctx}用户: {user_input}" if history_ctx else user_input
+            self._history_seeded = True
+        else:
+            prompt = user_input # AgentSDK运行时有状态，长连接内无需自己手动拼接history
 
         await manager.send_status(self.user_id, "thinking", {"message": "正在思考..."})
 
@@ -175,15 +181,15 @@ async def _build_history_context(session_id: int) -> str:
         from app.database.service.message import get_recent_messages
         
         res = get_recent_messages(session_id)
-        if not res.data:
+        if not res:
             return ""
         
         lines = []
-        for msg in res.data:
+        for msg in res:
             role = "用户" if msg["role"] == "user" else "社区助手"
             lines.append(f"{role}: {msg['content']}")
             
-        await RedisMemoryManager.push_messages_batch(session_id, res.data)
+        await RedisMemoryManager.push_messages_batch(session_id, res)
             
         return "以下是用户和社区助手之前的历史对话：\n" + "\n".join(lines) + "\n\n"
     except Exception as e:

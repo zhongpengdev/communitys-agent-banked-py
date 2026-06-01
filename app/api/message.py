@@ -14,7 +14,7 @@ async def get_all_message(session_id: int, user_id: str = Depends(verify_token))
 
         result = get_messages(session_id)
 
-        return {"code": "200", "message": "获取成功", "data": result.data}
+        return {"code": "200", "message": "获取成功", "data": result}
 
     except Exception as e:
         return {"code": "500", "message": f"获取失败，{e}", "data": None}

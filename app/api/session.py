@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query
 from app.utils.JWTutils.authentication import verify_token
 from app.database.service.session import create_session
 from app.services.title_generator import generate_title
-from app.database.service.session import delete_session_service
+from app.database.service.session import delete_session_service, rename_session_service
 from app.database.service.session import check_session_owner
 from app.database.service.message import delete_messages
 from pydantic import BaseModel
@@ -31,8 +31,8 @@ async def get_session_history(
             "code": 200,
             "message": "获取成功",
             "data": {
-                "items": result.data,  # 具体的会话列表
-                "total": result.count,  # 总条数
+                "items": result["items"],  # 具体的会话列表
+                "total": result["total"],  # 总条数
                 "page": page,
                 "page_size": page_size,
             },
@@ -66,10 +66,10 @@ async def create_new_session(
         # 1. 创建 Session 记录
         session_res = create_session(user_id, title)
 
-        if not session_res.data:
+        if not session_res:
             return {"code": 500, "message": "创建会话记录失败", "data": None}
 
-        new_session_id = session_res.data[0]["id"]
+        new_session_id = session_res["id"]
 
         # 3. 返回给前端
         return {
@@ -100,5 +100,21 @@ async def delete_session(session_id: int, user_id: int = Depends(verify_token)):
             return {"code": 200, "message": "会话删除成功", "data": None}
 
         return {"code": 500, "message": "会话删除失败", "data": None}
+    except Exception as e:
+        return {"code": 500, "message": f"服务器内部错误: {str(e)}", "data": None}
+    
+# 会话标题重命名
+@router.post("/rename-session") 
+async def rename_session(session_id: int, rename_title: str, user_id: int = Depends(verify_token)):
+    try:
+        if not check_session_owner(session_id, user_id):
+            return {"code": 403, "message": "无权访问此会话", "data": None}
+        
+        have_renamed = rename_session_service(session_id, rename_title)
+    
+        if have_renamed:
+            return {"code": 200, "message": "已修改标题", "data": None}
+    
+        return {"code": 500, "message": "修改标题失败，稍后重试", "data": None}
     except Exception as e:
         return {"code": 500, "message": f"服务器内部错误: {str(e)}", "data": None}

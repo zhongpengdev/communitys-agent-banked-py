@@ -69,8 +69,8 @@ async def websocket_chat_handler(
             if not current_session_id:
                 try:
                     session_res = create_session(user_id, "新对话")
-                    if session_res.data:
-                        current_session_id = session_res.data[0]["id"]
+                    if session_res:
+                        current_session_id = session_res["id"]
                         await manager.send_message(user_id, {
                             "type": "session_created",
                             "data": {"sessionId": current_session_id, "title": "新对话"},
