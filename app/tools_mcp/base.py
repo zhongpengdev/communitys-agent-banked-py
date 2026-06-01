@@ -1,17 +1,14 @@
-import os
 import json
-from dotenv import load_dotenv
 from app.utils.context import get_request_token
 from app.utils.http_client import HttpClientManager
+from app.core.config import settings
 
-load_dotenv()
-
-BANKED_URL = os.getenv("Banked_URL", "")
-SERP_KEY = os.getenv("SERP_KEY", "")
-DOMAINSDB_KEY = os.getenv("DOMAINSDB_KEY", "")
-API_KEY = os.getenv("API_KEY", "")
-QWEN_CREATE_URL = os.getenv("QWEN_CREATE_TEXT_URL", "")
-QWEN_GET_URL = os.getenv("QWEN_GET_RESULT_URL", "")
+BANKED_URL = settings.banked_url
+SERP_KEY = settings.serp_key
+DOMAINSDB_KEY = settings.domainsdb_key
+API_KEY = settings.api_key
+QWEN_CREATE_URL = settings.qwen_create_text_url
+QWEN_GET_URL = settings.qwen_get_result_url
 
 def _auth_headers() -> dict:
     token = get_request_token()

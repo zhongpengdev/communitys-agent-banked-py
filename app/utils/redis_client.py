@@ -1,24 +1,15 @@
-import os
 import json
 import time
 from typing import List, Dict
-from dotenv import load_dotenv
 import redis.asyncio as aioredis
-
-load_dotenv()
-
-# redis 配置
-REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
-REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
-REDIS_DB = int(os.getenv("REDIS_DB", "0"))
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD") or None
+from app.core.config import settings
 
 # 异步 Redis 连接池
 redis_pool = aioredis.ConnectionPool(
-    host=REDIS_HOST,
-    port=REDIS_PORT,
-    db=REDIS_DB,
-    password=REDIS_PASSWORD,
+    host=settings.redis_host,
+    port=settings.redis_port,
+    db=settings.redis_db,
+    password=settings.redis_password,
     decode_responses=True  # 自动将字节转字符串
 )
 

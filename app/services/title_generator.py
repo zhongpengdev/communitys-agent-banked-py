@@ -3,13 +3,13 @@
 使用 Anthropic 客户端，模型和 API 地址均从环境变量读取
 """
 
-import os
 from anthropic import AsyncAnthropic
+from app.core.config import settings
 
-CLAUDE_TITLE_MODEL = os.getenv("CLAUDE_TITLE_MODEL")
+CLAUDE_TITLE_MODEL = settings.claude_title_model
 
 _client = AsyncAnthropic(
-    base_url=os.getenv("ANTHROPIC_BASE_URL") or None,
+    base_url=settings.anthropic_base_url or None,
 )
 
 

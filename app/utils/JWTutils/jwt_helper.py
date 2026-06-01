@@ -2,13 +2,10 @@
 JWT 解析工具 - 最精简版本
 """
 
-import os
 import jwt
-from dotenv import load_dotenv
+from app.core.config import settings
 
-load_dotenv()
-
-JWT_SECRET = os.getenv("JWT_SECRET")
+JWT_SECRET = settings.jwt_secret
 JWT_ALGORITHM = "HS512"  # Java 后端使用 HS512
 
 
