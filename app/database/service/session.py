@@ -1,4 +1,5 @@
-from app.database.client import SessionLocal, SessionModel, DbResult
+from app.core.database import SessionLocal
+from app.models.session import SessionModel
 
 
 # 分页查询用户的会话历史
@@ -20,14 +21,17 @@ def get_sessions_paginated(user_id: str, page: int = 1, page_size: int = 10):
             .all()
         )
         
-        data = [{
+        items = [{
             "id": s.id,
             "user_id": s.user_id,
             "title": s.title,
             "created_at": s.created_at.isoformat() if s.created_at else None
         } for s in sessions]
         
-        return DbResult(data=data, count=total_count)
+        return {
+            "items": items,
+            "total": total_count
+        }
     finally:
         db.close()
 
@@ -39,12 +43,12 @@ def create_session(user_id: int, title: str):
         db.add(new_session)
         db.commit()
         db.refresh(new_session)
-        return DbResult(data=[{
+        return {
             "id": new_session.id,
             "user_id": new_session.user_id,
             "title": new_session.title,
             "created_at": new_session.created_at.isoformat() if new_session.created_at else None
-        }])
+        }
     except Exception as e:
         db.rollback()
         raise e
@@ -61,11 +65,11 @@ def update_session_title(session_id: int, title: str):
             session.title = title
             db.commit()
             db.refresh(session)
-            return DbResult(data=[{
+            return {
                 "id": session.id,
                 "title": session.title
-            }])
-        return DbResult(data=[])
+            }
+        return {}
     except Exception as e:
         db.rollback()
         raise e
@@ -95,6 +99,24 @@ def delete_session_service(session_id: int):
         if session:
             db.delete(session)
             db.commit()
+            return True
+        return False
+    except Exception as e:
+        db.rollback()
+        raise e
+    finally:
+        db.close()
+        
+
+# 重命名会话
+def rename_session_service(session_id: int, new_title: str):
+    db = SessionLocal()
+    try:
+        session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+        if session:
+            session.title = new_title
+            db.commit()
+            db.refresh(session)
             return True
         return False
     except Exception as e:
