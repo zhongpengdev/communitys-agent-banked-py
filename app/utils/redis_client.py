@@ -1,23 +1,23 @@
+"""
+Redis Memory Management Service.
+Handles fast-access chat memory operations using Pydantic settings.
+"""
+
 import json
 import time
+import logging
 from typing import List, Dict
-import redis.asyncio as aioredis
 from app.core.config import settings
+from app.core.redis import redis_client
 
-# 异步 Redis 连接池
-redis_pool = aioredis.ConnectionPool(
-    host=settings.redis_host,
-    port=settings.redis_port,
-    db=settings.redis_db,
-    password=settings.redis_password,
-    decode_responses=True  # 自动将字节转字符串
-)
-
-# 建议：实例化一个全局的 Redis 客户端，复用连接池，避免每次操作都重新实例化，提升性能
-redis_client = aioredis.Redis(connection_pool=redis_pool)
+# 初始化标准日志记录器
+logger = logging.getLogger("app.redis")
 
 
 class RedisMemoryManager:
+    """
+    基于 Redis Pipeline 和 LTRIM 实现的极速热记忆管理器。
+    """
     @staticmethod
     def _get_key(session_id: int) -> str:
         return f"agent:session:{session_id}:messages"
@@ -26,31 +26,31 @@ class RedisMemoryManager:
     async def push_message(cls, session_id: int, role: str, content: str):
         """
         向 Redis 中以非阻塞 List 追加一条热记忆。
-        使用 LTRIM 保持最多 10 条原始数据。
+        使用 LTRIM 保持最多 N 条原始数据（从配置 settings.redis_memory_limit 读取）。
         """
         key = cls._get_key(session_id)
         
-        # 封装消息格式
-        # 【fix】：json.dump 用于写入文件对象，转换为字符串必须用 json.dumps
         payload = json.dumps({
             "role": role,
             "content": content,
             "create_at": time.time()
         }, ensure_ascii=False)
         
-        # 使用 Pipeline 管道发送命令，复用连接
+        limit = settings.redis_memory_limit
+        ttl = settings.redis_memory_ttl
+        
+        # 使用 Pipeline 管道发送命令，复用连接并提升效率
         async with redis_client.pipeline(transaction=True) as pipe:
             pipe.rpush(key, payload)
-            pipe.ltrim(key, -10, -1)  # 保留最近的 10 条对话
-            
-            pipe.expire(key, 1800) # 半小时过期一次
+            pipe.ltrim(key, -limit, -1)  # 保持最近的配置限额条对话
+            pipe.expire(key, ttl)        # 每次写入自动续期
             await pipe.execute()
             
     @classmethod
     async def push_messages_batch(cls, session_id: int, messages: list[dict]):
         """
         将所有的历史消息一次性推入列表，并在 Pipeline 尾端统一执行 LTRIM 截断与 EXPIRE 延时。
-        将服务冷启动阶段的未命中的历史消息写回延迟降低，提升主事件循环的调度效率。
+        降低未命中缓存时的写回开销，提升主事件循环 of 调度效率。
         """
         if not messages:
             return
@@ -64,22 +64,23 @@ class RedisMemoryManager:
             }, ensure_ascii=False) for msg in messages
         ]
         
+        limit = settings.redis_memory_limit
+        ttl = settings.redis_memory_ttl
+        
         async with redis_client.pipeline(transaction=True) as pipe:
             pipe.rpush(key, *payloads)
-            pipe.ltrim(key, -10, -1)  # 保留最近的 10 条对话
-            
-            pipe.expire(key, 1800) # 半小时过期一次
+            pipe.ltrim(key, -limit, -1)
+            pipe.expire(key, ttl)
             await pipe.execute()
         
     @classmethod
     async def get_message(cls, session_id: int) -> List[Dict]:
         """
-        从 Redis 中获取最近的 10 条消息。
+        从 Redis 中获取最近缓存的历史消息。
         """
         key = cls._get_key(session_id)
         
-        # 【fix】：lrange(key, 10, -1) 在列表长度最大只有 10 时会返回空列表。
-        # 应该使用 lrange(key, 0, -1) 来获取列表中的所有元素（因为 ltrim 已经保证它最大为 10）。
+        # lrange(key, 0, -1) 获取列表中的所有元素（因为 ltrim 已经截断到 limit 大小）
         raw_list = await redis_client.lrange(key, 0, -1)
         if not raw_list:
             return []
@@ -87,10 +88,9 @@ class RedisMemoryManager:
         messages = []
         for raw in raw_list:
             try:
-                # 【fix】：json.load 用于从文件对象中加载，解析字符串必须使用 json.loads
                 messages.append(json.loads(raw))
             except Exception as e:
-                print(f"[RedisMemory] 反序列化失败: {e}")
+                logger.error("[RedisMemory] 反序列化消息失败: %s, 原始数据: %r", e, raw)
                 continue
             
         return messages
@@ -98,7 +98,7 @@ class RedisMemoryManager:
     @classmethod
     async def clear_message(cls, session_id: int):
         """
-        清空 session_id 在 Redis 中的热数据：用户删除会话，开启新的会话
+        清空 session_id 在 Redis 中的热数据。
         """
         key = cls._get_key(session_id)
         await redis_client.delete(key)

@@ -13,11 +13,13 @@ class Settings(BaseSettings):
 
     database_url: str
 
-    # Redis
+    # Redis 高速缓存配置
     redis_host: str = "127.0.0.1"
     redis_port: int = 6379
     redis_db: int = 0
     redis_password: str | None = None
+    redis_memory_limit: int = 10
+    redis_memory_ttl: int = 1800
 
     # JWT 认证配置
     jwt_secret: str
