@@ -18,8 +18,7 @@ def test_get_messages_forbidden_for_other_user(client, auth_headers):
 
 
 def test_get_messages_returns_messages(client, auth_headers):
-    mock_result = MagicMock()
-    mock_result.data = [
+    mock_result = [
         {"id": 1, "role": "user", "content": "你好"},
         {"id": 2, "role": "assistant", "content": "你好！"},
     ]
@@ -36,8 +35,7 @@ def test_get_messages_returns_messages(client, auth_headers):
 
 
 def test_get_messages_empty_session(client, auth_headers):
-    mock_result = MagicMock()
-    mock_result.data = []
+    mock_result = []
 
     with patch("app.api.message.check_session_owner", return_value=True), \
          patch("app.api.message.get_messages", return_value=mock_result):

@@ -13,9 +13,10 @@ def test_get_sessions_requires_auth(client):
 
 
 def test_get_sessions_returns_200(client, auth_headers):
-    mock_result = MagicMock()
-    mock_result.data = [{"id": 1, "title": "测试会话"}]
-    mock_result.count = 1
+    mock_result = {
+        "items": [{"id": 1, "title": "测试会话"}],
+        "total": 1
+    }
 
     with patch("app.api.session.get_sessions_paginated", return_value=mock_result):
         response = client.get("/sessions", headers=auth_headers)
@@ -26,9 +27,10 @@ def test_get_sessions_returns_200(client, auth_headers):
 
 
 def test_get_sessions_returns_paginated_data(client, auth_headers):
-    mock_result = MagicMock()
-    mock_result.data = [{"id": 1, "title": "会话1"}, {"id": 2, "title": "会话2"}]
-    mock_result.count = 5
+    mock_result = {
+        "items": [{"id": 1, "title": "会话1"}, {"id": 2, "title": "会话2"}],
+        "total": 5
+    }
 
     with patch("app.api.session.get_sessions_paginated", return_value=mock_result):
         response = client.get("/sessions?page=1&page_size=2", headers=auth_headers)
@@ -56,8 +58,7 @@ def test_create_session_requires_auth(client):
 
 
 def test_create_session_returns_session_id(client, auth_headers):
-    mock_session_result = MagicMock()
-    mock_session_result.data = [{"id": 42}]
+    mock_session_result = {"id": 42}
 
     with patch("app.api.session.generate_title", new_callable=AsyncMock, return_value="测试标题"), \
          patch("app.api.session.create_session", return_value=mock_session_result):
@@ -75,8 +76,7 @@ def test_create_session_returns_session_id(client, auth_headers):
 
 
 def test_create_session_handles_create_failure(client, auth_headers):
-    mock_result = MagicMock()
-    mock_result.data = []  # empty → create failed
+    mock_result = None
 
     with patch("app.api.session.generate_title", new_callable=AsyncMock, return_value="标题"), \
          patch("app.api.session.create_session", return_value=mock_result):
@@ -118,8 +118,7 @@ def test_delete_session_forbidden_for_other_user(client, auth_headers):
 
 
 def test_delete_session_success(client, auth_headers):
-    mock_messages_result = MagicMock()
-    mock_messages_result.data = [{"id": 1}]
+    mock_messages_result = [{"id": 1}]
 
     with patch("app.api.session.check_session_owner", return_value=True), \
          patch("app.api.session.delete_session_service", return_value=True), \

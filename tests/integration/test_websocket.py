@@ -81,8 +81,7 @@ def test_websocket_message_calls_handle_message(client):
     mock_agent.stop = AsyncMock()
     mock_agent.handle_message = AsyncMock()
 
-    mock_session_result = MagicMock()
-    mock_session_result.data = [{"id": 10}]
+    mock_session_result = {"id": 10}
 
     with patch("app.agent.runner.AgentSession", return_value=mock_agent), \
          patch("app.websocket.routes.create_session", return_value=mock_session_result), \
@@ -139,8 +138,7 @@ def test_websocket_auto_creates_session_when_missing(client):
     mock_agent.stop = AsyncMock()
     mock_agent.handle_message = AsyncMock()
 
-    mock_session_result = MagicMock()
-    mock_session_result.data = [{"id": 99}]
+    mock_session_result = {"id": 99}
 
     with patch("app.agent.runner.AgentSession", return_value=mock_agent), \
          patch("app.websocket.routes.create_session", return_value=mock_session_result) as mock_create, \
