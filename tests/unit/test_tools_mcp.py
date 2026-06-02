@@ -89,7 +89,7 @@ async def test_get_time_returns_formatted_datetime():
 # ── get_weather ───────────────────────────────────────────────────────────────
 
 @patch("app.tools_mcp.base.http_get")
-@patch("app.utils.http_client.HttpClientManager.get_session")
+@patch("app.core.http.HttpClientManager.get_session")
 async def test_get_weather_with_city(mock_get_session, mock_get):
     mock_response = AsyncMock()
     mock_response.__aenter__ = AsyncMock(return_value=mock_response)
@@ -111,7 +111,7 @@ async def test_get_weather_with_city(mock_get_session, mock_get):
 async def test_get_weather_without_city_uses_ip(mock_get):
     mock_get.return_value = {"data": "1.2.3.4"}
 
-    with patch("app.utils.http_client.HttpClientManager.get_session") as mock_get_session:
+    with patch("app.core.http.HttpClientManager.get_session") as mock_get_session:
         mock_resp = AsyncMock()
         mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
         mock_resp.__aexit__ = AsyncMock(return_value=None)
@@ -130,7 +130,7 @@ async def test_get_weather_without_city_uses_ip(mock_get):
     assert "content" in result
 
 
-@patch("app.utils.http_client.HttpClientManager.get_session")
+@patch("app.core.http.HttpClientManager.get_session")
 async def test_get_weather_returns_error_on_failure(mock_get_session):
     mock_get_session.side_effect = Exception("network error")
     result = await get_weather({"city": "Shanghai"})

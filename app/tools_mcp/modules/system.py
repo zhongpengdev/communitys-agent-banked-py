@@ -2,7 +2,7 @@ import aiohttp
 from datetime import datetime
 from claude_agent_sdk import tool
 from app.tools_mcp import base
-from app.utils.http_client import HttpClientManager
+from app.core.http import HttpClientManager
 
 @tool("get_time", "获取当前日期和时间", {})
 async def get_time(args: dict) -> dict:

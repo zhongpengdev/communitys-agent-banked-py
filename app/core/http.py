@@ -1,7 +1,10 @@
 # 单例模式全局只活跃一个aiohttp实例
 
 import aiohttp
+import logging
 from typing import Optional
+
+logger = logging.getLogger("app.http")
 
 class HttpClientManager:
     """
@@ -34,10 +37,10 @@ class HttpClientManager:
                 timeout=timeout
             )   
             
-            print("[HttpClientManager] 全局 aiohttp.ClientSession 连接池初始化成功。")
+            logger.info("全局 aiohttp.ClientSession 连接池初始化成功。")
             
     @classmethod
     async def close_session(cls):
         if cls.session and not cls.session.closed:
             await cls.session.close()
-            print("[HttpClientManager] 全局 aiohttp.ClientSession 已关闭释放。")
+            logger.info("全局 aiohttp.ClientSession 已关闭释放。")

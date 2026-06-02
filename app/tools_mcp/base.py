@@ -1,6 +1,6 @@
 import json
 from app.utils.context import get_request_token
-from app.utils.http_client import HttpClientManager
+from app.core.http import HttpClientManager
 from app.core.config import settings
 
 BANKED_URL = settings.banked_url

@@ -4,3 +4,6 @@ test
 guidence
 .env
 .pytest_cache/
+
+.antigravitycli
+.claude
