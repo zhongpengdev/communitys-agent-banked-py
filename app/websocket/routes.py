@@ -5,6 +5,7 @@ WebSocket 聊天处理器
 
 import json
 import asyncio
+from loguru import logger
 from fastapi import WebSocket, WebSocketDisconnect
 from app.websocket.manager import manager
 from app.database.service.session import create_session, update_session_title
@@ -82,7 +83,7 @@ async def websocket_chat_handler(
                         await manager.send_error(user_id, "创建会话失败，请稍后重试")
                         continue
                 except Exception as db_err:
-                    print(f"[WebSocket] 数据库错误: {db_err}")
+                    logger.error(f"数据库错误: {db_err}")
                     await manager.send_error(user_id, "数据库操作失败，请检查配置")
                     continue
 
@@ -90,16 +91,14 @@ async def websocket_chat_handler(
             try:
                 await agent.handle_message(current_session_id, query_text)
             except Exception as agent_err:
-                print(f"[WebSocket] Agent 错误: {agent_err}")
+                logger.error(f"Agent 错误: {agent_err}")
                 await manager.send_error(user_id, f"处理消息时出错: {type(agent_err).__name__}")
                 await manager.send_status(user_id, "completed", {"message": "出错了"})
 
     except WebSocketDisconnect:
         manager.disconnect(user_id)
     except Exception as e:
-        import traceback
-        print(f"[WebSocket] 错误: {e}")
-        print(traceback.format_exc())
+        logger.exception(f"处理出错: {e}")
         try:
             await manager.send_error(user_id, f"处理出错: {str(e)}")
         except Exception:
@@ -119,4 +118,4 @@ async def _bg_update_title(session_id: int, content: str, user_id: str):
             "data": {"sessionId": session_id, "title": new_title},
         })
     except Exception as e:
-        print(f"[WebSocket] 后台生成标题失败: {e}")
+        logger.error(f"后台生成标题失败: {e}")

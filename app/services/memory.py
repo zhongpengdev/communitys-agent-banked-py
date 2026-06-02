@@ -1,17 +1,9 @@
-"""
-Redis Memory Management Service.
-Handles fast-access chat memory operations using Pydantic settings.
-"""
-
 import json
 import time
-import logging
 from typing import List, Dict
 from app.core.config import settings
 from app.core.redis import redis_client
-
-# 初始化标准日志记录器
-logger = logging.getLogger("app.redis")
+from loguru import logger
 
 
 class RedisMemoryManager:
@@ -90,7 +82,7 @@ class RedisMemoryManager:
             try:
                 messages.append(json.loads(raw))
             except Exception as e:
-                logger.error("[RedisMemory] 反序列化消息失败: %s, 原始数据: %r", e, raw)
+                logger.error(f"[RedisMemory] 反序列化消息失败: {e}, 原始数据: {raw}")
                 continue
             
         return messages

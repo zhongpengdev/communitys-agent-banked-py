@@ -1,6 +1,7 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 from app.core.config import settings
+from loguru import logger
 
 engine = create_engine(settings.database_url,
                        client_encoding="utf8")
@@ -15,7 +16,7 @@ def init_db():
         from app.models.message import MessageModel
         Base.metadata.create_all(bind=engine)
     except Exception as e:
-        print(f"Database initialization failed: {e}. This is expected if DATABASE_URL is not set or PG is down.")
+        logger.warning(f"Database initialization failed: {e}. This is expected if DATABASE_URL is not set or PG is down.")
 
 # Run initialization on import
 init_db()

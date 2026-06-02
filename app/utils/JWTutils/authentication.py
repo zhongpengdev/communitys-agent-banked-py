@@ -5,6 +5,7 @@ JWT 认证中间件 - 统一返回格式
 from fastapi import Header, HTTPException
 from app.utils.JWTutils.jwt_helper import get_user_id
 import jwt
+from loguru import logger
 
 
 def verify_token(authorization: str = Header(None)) -> str:
@@ -21,7 +22,7 @@ def verify_token(authorization: str = Header(None)) -> str:
         HTTPException: 401 - token 无效或过期
     """
     if not authorization:
-        print("没认证成功")
+        logger.warning("未检测到 Authorization 头，认证失败")
         raise HTTPException(
             status_code=401,
             detail={"code": 401, "message": "缺少 Authorization header", "data": None},
@@ -30,13 +31,13 @@ def verify_token(authorization: str = Header(None)) -> str:
     # 去掉 "Bearer " 前缀
     token = authorization.replace("Bearer ", "").strip()
 
-    print(f"token is {token}")
+    logger.debug(f"提取到的 Token: {token}")
 
     try:
         # 解码并验证 token（会自动检查过期时间）
         user_id = get_user_id(token)
 
-        print(f"------------{user_id}------------")
+        logger.info(f"用户 {user_id} 验证成功")
         return user_id
 
     except jwt.ExpiredSignatureError:

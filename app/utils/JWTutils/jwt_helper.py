@@ -4,6 +4,7 @@ JWT 解析工具 - 最精简版本
 
 import jwt
 from app.core.config import settings
+from loguru import logger
 
 JWT_SECRET = settings.jwt_secret
 JWT_ALGORITHM = "HS512"  # Java 后端使用 HS512
@@ -38,5 +39,5 @@ def get_user_id(token: str) -> str:
     """
     payload = decode_token(token)
 
-    print(f"-----userId------{payload.get('userId')}")
+    logger.debug(f"从 Token payload 解密得到的 userId: {payload.get('userId')}")
     return str(payload.get("userId") or payload.get("sub") or payload.get("id"))

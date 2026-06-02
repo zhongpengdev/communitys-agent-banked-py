@@ -1,10 +1,8 @@
 # 单例模式全局只活跃一个aiohttp实例
 
 import aiohttp
-import logging
 from typing import Optional
-
-logger = logging.getLogger("app.http")
+from loguru import logger
 
 class HttpClientManager:
     """

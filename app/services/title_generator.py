@@ -5,6 +5,7 @@
 
 from anthropic import AsyncAnthropic
 from app.core.config import settings
+from loguru import logger
 
 CLAUDE_TITLE_MODEL = settings.claude_title_model
 
@@ -33,5 +34,5 @@ async def generate_title(content: str) -> str:
         title = message.content[0].text.strip()
         return title[:20] or "新会话"
     except Exception as e:
-        print(f"[TitleGenerator] 生成标题失败: {e}")
+        logger.error(f"生成标题失败: {e}")
         return "新会话"

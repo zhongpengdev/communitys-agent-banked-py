@@ -7,6 +7,7 @@ from app.database.service.session import check_session_owner
 from app.database.service.message import delete_messages
 from pydantic import BaseModel
 from app.database.service.session import get_sessions_paginated
+from loguru import logger
 
 router = APIRouter(tags=["会话"])
 
@@ -19,12 +20,12 @@ async def get_session_history(
 ):
     """获取聊天历史"""
 
-    print(f"用户 ID: {user_id}")
+    logger.info(f"用户 ID: {user_id}")
 
     try:
         result = get_sessions_paginated(user_id, page, page_size)
 
-        print(f"---获取历史记录成功，{result}----")
+        logger.info(f"---获取历史记录成功，{result}----")
 
         # RestFul API
         return {

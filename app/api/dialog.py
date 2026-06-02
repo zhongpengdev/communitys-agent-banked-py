@@ -2,6 +2,7 @@ from fastapi import APIRouter, WebSocket, Query
 from app.websocket import websocket_chat_handler
 from app.utils.JWTutils.jwt_helper import get_user_id
 import json
+from loguru import logger
 
 router = APIRouter(tags=["对话"])
 
@@ -36,7 +37,7 @@ async def websocket_chat_endpoint(
         try:
             user_id = get_user_id(token)
         except Exception as e:
-            print(f"[Dialog] Token 验证失败: {e}")
+            logger.error(f"Token 验证失败: {e}")
             await websocket.send_json({"type": "error", "content": f"Token 验证失败: {str(e)}"})
             await websocket.close()
             return
@@ -54,7 +55,7 @@ async def websocket_chat_endpoint(
         )
 
     except Exception as e:
-        print(f"[Dialog] WebSocket 错误: {e}")
+        logger.error(f"WebSocket 错误: {e}")
         try:
             await websocket.close()
         except Exception:

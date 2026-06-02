@@ -5,6 +5,7 @@ WebSocket 连接管理器
 
 from fastapi import WebSocket
 from typing import Dict
+from loguru import logger
 
 
 class ConnectionManager:
@@ -24,8 +25,8 @@ class ConnectionManager:
         """
         await websocket.accept()
         self.active_connections[user_id] = websocket
-        print(
-            f"已建立一个websocket连接 | [WebSocket] User {user_id} connected. Total connections: {len(self.active_connections)}"
+        logger.info(
+            f"已建立一个websocket连接 | User {user_id} connected. Total connections: {len(self.active_connections)}"
         )
 
     def disconnect(self, user_id: str):
@@ -37,8 +38,8 @@ class ConnectionManager:
         """
         if user_id in self.active_connections:
             del self.active_connections[user_id]
-            print(
-                f"关闭一个连接 | [WebSocket] User {user_id} disconnected. Total connections: {len(self.active_connections)}"
+            logger.info(
+                f"关闭一个连接 | User {user_id} disconnected. Total connections: {len(self.active_connections)}"
             )
 
     async def send_message(self, user_id: str, message: dict):
@@ -54,7 +55,7 @@ class ConnectionManager:
             try:
                 await websocket.send_json(message)
             except Exception as e:
-                print(f"[WebSocket] Error sending message to {user_id}: {e}")
+                logger.error(f"Error sending message to {user_id}: {e}")
                 self.disconnect(user_id)
                 # 抛出异常，让上层知道连接已断开
                 raise RuntimeError(f"WebSocket send failed for user {user_id}: {e}")

@@ -20,6 +20,7 @@ from app.tools.tool_metadata import get_tool_display_info
 from app.database.service.message import save_message, get_messages
 from app.core.config import settings
 from app.services.memory import RedisMemoryManager
+from loguru import logger
 
 CLAUDE_MODEL = settings.claude_model
 
@@ -193,7 +194,7 @@ async def _build_history_context(session_id: int) -> str:
             
         return "以下是用户和社区助手之前的历史对话：\n" + "\n".join(lines) + "\n\n"
     except Exception as e:
-        print(f"[Runner] 加载历史消息失败: {e}")
+        logger.error(f"加载历史消息失败: {e}")
         return ""
 
 
@@ -210,7 +211,7 @@ async def _save(session_id: int, user_input: str, response: str):
         # save_message 内部是阻塞的 SQLAlchemy IO，我们使用 asyncio.to_thread 使其异步执行，防止阻塞 FastAPI 主事件循环
         await asyncio.to_thread(_save_to_db, session_id, user_input, response)
     except Exception as e:
-        print(f"[Runner] 保存消息到记忆库失败: {e}")
+        logger.error(f"保存消息到记忆库失败: {e}")
 
 
 def _save_to_db(session_id: int, user_input: str, response: str):
@@ -219,5 +220,5 @@ def _save_to_db(session_id: int, user_input: str, response: str):
         save_message(session_id=session_id, role="user", content=user_input)
         save_message(session_id=session_id, role="assistant", content=response)
     except Exception as e:
-        print(f"[Runner] 后台落盘数据库失败: {e}")
+        logger.error(f"后台落盘数据库失败: {e}")
 
