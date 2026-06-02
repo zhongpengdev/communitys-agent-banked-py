@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     redis_memory_limit: int = 10
     redis_memory_ttl: int = 1800
 
+    # 全局调试与日志目录配置
+    debug: bool = True
+    log_dir: str = "loguru_logs"
+
     # JWT 认证配置
     jwt_secret: str
     jwt_expiration: int = 604800000
