@@ -5,14 +5,20 @@ from app.services.title_generator import generate_title
 from app.database.service.session import delete_session_service, rename_session_service
 from app.database.service.session import check_session_owner
 from app.database.service.message import delete_messages
-from app.schemas import NewSessionRequest
+from app.schemas import (
+    BaseResponse,
+    PaginatedResponse,
+    SessionResponse,
+    SessionCreateResponseData,
+    NewSessionRequest
+)
 from app.database.service.session import get_sessions_paginated
 from loguru import logger
 
 router = APIRouter(tags=["会话"])
 
 
-@router.get("/sessions")
+@router.get("/sessions", response_model=PaginatedResponse[SessionResponse])
 async def get_session_history(
     user_id: str = Depends(verify_token),
     page: int = Query(1, ge=1, description="当前页码"),
@@ -48,7 +54,7 @@ async def get_session_history(
 
 
 
-@router.post("/create_new_session")
+@router.post("/create_new_session", response_model=BaseResponse[SessionCreateResponseData])
 async def create_new_session(
     data: NewSessionRequest, user_id: int = Depends(verify_token)
 ):
@@ -84,7 +90,7 @@ async def create_new_session(
 
 
 # 删除会话
-@router.delete("/delete-session")
+@router.delete("/delete-session", response_model=BaseResponse[None])
 async def delete_session(session_id: int, user_id: int = Depends(verify_token)):
     try:
         if not check_session_owner(session_id, user_id):
@@ -102,7 +108,7 @@ async def delete_session(session_id: int, user_id: int = Depends(verify_token)):
         return {"code": 500, "message": f"服务器内部错误: {str(e)}", "data": None}
     
 # 会话标题重命名
-@router.post("/rename-session") 
+@router.post("/rename-session", response_model=BaseResponse[None]) 
 async def rename_session(session_id: int, rename_title: str, user_id: int = Depends(verify_token)):
     try:
         if not check_session_owner(session_id, user_id):

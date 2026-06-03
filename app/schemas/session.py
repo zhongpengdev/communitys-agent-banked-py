@@ -18,8 +18,8 @@ class SessionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     
     id: int = Field(..., description="会话 ID")
-    user_id: str = Field(..., description="所属用户 ID")
-    title: str = Field(..., description="会话标题")
+    user_id: Optional[str] = Field(None, description="所属用户 ID")
+    title: Optional[str] = Field(None, description="会话标题")
     created_at: Optional[str] = Field(None, description="创建时间（ISO 格式）")
 
 class SessionRenameRequest(BaseModel):

@@ -3,11 +3,12 @@
 """
 from fastapi import APIRouter
 from app.tools.tool_metadata import get_all_tools_metadata
+from app.schemas import ToolMetadataResponse
 
 router = APIRouter(prefix="/api/tools", tags=["工具"])
 
 
-@router.get("/metadata")
+@router.get("/metadata", response_model=ToolMetadataResponse)
 async def get_tools_metadata():
     """
     获取所有工具的元数据
