@@ -5,7 +5,7 @@ from app.services.title_generator import generate_title
 from app.database.service.session import delete_session_service, rename_session_service
 from app.database.service.session import check_session_owner
 from app.database.service.message import delete_messages
-from pydantic import BaseModel
+from app.schemas import NewSessionRequest
 from app.database.service.session import get_sessions_paginated
 from loguru import logger
 
@@ -46,9 +46,6 @@ async def get_session_history(
         }
 
 
-class NewSessionRequest(BaseModel):
-    content: str  # 用户发的第一句话
-    title: str = "新对话"  # 默认标题
 
 
 @router.post("/create_new_session")
