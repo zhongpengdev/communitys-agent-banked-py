@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from app.utils.JWTutils.authentication import verify_token
+from app.core.security import verify_token
 from app.database.service.message import get_messages
 from app.database.service.session import check_session_owner
 

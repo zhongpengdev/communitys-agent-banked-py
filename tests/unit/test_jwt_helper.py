@@ -4,7 +4,7 @@ import pytest
 import jwt
 from datetime import datetime, timezone, timedelta
 from unittest.mock import patch
-from app.utils.JWTutils.jwt_helper import decode_token, get_user_id
+from app.core.security import decode_token, get_user_id
 
 SECRET = "test-secret-for-testing-only"
 ALGORITHM = "HS512"

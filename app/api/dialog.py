@@ -1,6 +1,6 @@
 from fastapi import APIRouter, WebSocket, Query
 from app.websocket import websocket_chat_handler
-from app.utils.JWTutils.jwt_helper import get_user_id
+from app.core.security import get_user_id
 import json
 from loguru import logger
 

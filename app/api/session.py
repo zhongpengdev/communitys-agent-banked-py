@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Query
-from app.utils.JWTutils.authentication import verify_token
+from app.core.security import verify_token
 from app.database.service.session import create_session
 from app.services.title_generator import generate_title
 from app.database.service.session import delete_session_service, rename_session_service

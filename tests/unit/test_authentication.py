@@ -4,7 +4,7 @@ import pytest
 import jwt
 from datetime import datetime, timezone, timedelta
 from fastapi import HTTPException
-from app.utils.JWTutils.authentication import verify_token
+from app.core.security import verify_token
 
 SECRET = "test-secret-for-testing-only"
 

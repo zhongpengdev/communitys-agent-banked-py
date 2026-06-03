@@ -28,7 +28,8 @@ class Settings(BaseSettings):
     # JWT 认证配置
     jwt_secret: str
     jwt_expiration: int = 604800000
-
+    jwt_algorithm: str = "HS512"
+    
     # 第三方检索 API
     serp_key: str = ""
     domainsdb_key: str = ""
