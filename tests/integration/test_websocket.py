@@ -85,6 +85,7 @@ def test_websocket_message_calls_handle_message(client):
 
     with patch("app.agent.runner.AgentSession", return_value=mock_agent), \
          patch("app.websocket.routes.create_session", return_value=mock_session_result), \
+         patch("app.websocket.routes.check_session_owner", return_value=True), \
          patch("app.websocket.routes.manager") as mock_manager:
         mock_manager.active_connections = {}
         mock_manager.send_message = AsyncMock()
