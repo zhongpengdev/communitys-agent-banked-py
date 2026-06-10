@@ -10,7 +10,8 @@ from app.schemas import (
     PaginatedResponse,
     SessionResponse,
     SessionCreateResponseData,
-    NewSessionRequest
+    NewSessionRequest,
+    SessionRenameRequest
 )
 from app.database.service.session import get_sessions_paginated
 from loguru import logger
@@ -67,7 +68,7 @@ async def create_new_session(
         # 生成标题
         title = await generate_title(data.content)
 
-        # 1. 创建 Session 记录
+        # 创建 Session 记录
         session_res = create_session(user_id, title)
 
         if not session_res:
@@ -75,7 +76,7 @@ async def create_new_session(
 
         new_session_id = session_res["id"]
 
-        # 3. 返回给前端
+        # 返回给前端
         return {
             "code": 200,
             "message": "会话创建成功",
@@ -107,14 +108,13 @@ async def delete_session(session_id: int, user_id: int = Depends(verify_token)):
     except Exception as e:
         return {"code": 500, "message": f"服务器内部错误: {str(e)}", "data": None}
     
-# 会话标题重命名
 @router.post("/rename-session", response_model=BaseResponse[None]) 
-async def rename_session(session_id: int, rename_title: str, user_id: int = Depends(verify_token)):
+async def rename_session(data: SessionRenameRequest, user_id: int = Depends(verify_token)):
     try:
-        if not check_session_owner(session_id, user_id):
+        if not check_session_owner(data.session_id, user_id):
             return {"code": 403, "message": "无权访问此会话", "data": None}
         
-        have_renamed = rename_session_service(session_id, rename_title)
+        have_renamed = rename_session_service(data.session_id, data.rename_title)
     
         if have_renamed:
             return {"code": 200, "message": "已修改标题", "data": None}

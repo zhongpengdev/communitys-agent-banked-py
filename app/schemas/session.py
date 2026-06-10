@@ -24,4 +24,5 @@ class SessionResponse(BaseModel):
 
 class SessionRenameRequest(BaseModel):
     """会话重命名请求结构"""
+    session_id: int = Field(..., description="会话 ID")
     rename_title: str = Field(..., description="新的会话标题")
