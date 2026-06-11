@@ -101,7 +101,7 @@ async def delete_session(session_id: int, user_id: int = Depends(verify_token)):
 
         deleted_messages = delete_messages(session_id)
 
-        if deleted_session and deleted_messages:
+        if deleted_session:
             return {"code": 200, "message": "会话删除成功", "data": None}
 
         return {"code": 500, "message": "会话删除失败", "data": None}
