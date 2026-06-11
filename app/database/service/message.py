@@ -73,21 +73,3 @@ def get_recent_messages(session_id: int, limit: int = 10):
         } for msg in messages]
     finally:
         db.close()
-
-
-# 删除session_id的所有消息
-def delete_messages(session_id: int):
-    db = SessionLocal()
-    try:
-        messages_to_delete = db.query(MessageModel).filter(MessageModel.session_id == session_id).all()
-        data = [{"id": m.id} for m in messages_to_delete]
-        
-        db.query(MessageModel).filter(MessageModel.session_id == session_id).delete()
-        db.commit()
-        
-        return data
-    except Exception as e:
-        db.rollback()
-        raise e
-    finally:
-        db.close()

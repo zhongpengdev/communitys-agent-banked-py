@@ -6,6 +6,7 @@ class MessageModel(Base):
     __tablename__ = "messages"
 
     id = Column(Integer, primary_key=True, index=True)
+    # messages已经开启了联级删除
     session_id = Column(Integer, ForeignKey("sessions.id", ondelete="CASCADE"), index=True)
     role = Column(String)
     content = Column(Text)

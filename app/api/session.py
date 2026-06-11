@@ -4,7 +4,6 @@ from app.database.service.session import create_session
 from app.services.title_generator import generate_title
 from app.database.service.session import delete_session_service, rename_session_service
 from app.database.service.session import check_session_owner
-from app.database.service.message import delete_messages
 from app.schemas import (
     BaseResponse,
     PaginatedResponse,
@@ -97,11 +96,7 @@ async def delete_session(session_id: int, user_id: int = Depends(verify_token)):
         if not check_session_owner(session_id, user_id):
             return {"code": 403, "message": "无权访问此会话", "data": None}
 
-        deleted_session = delete_session_service(session_id)
-
-        deleted_messages = delete_messages(session_id)
-
-        if deleted_session:
+        if delete_session_service(session_id):
             return {"code": 200, "message": "会话删除成功", "data": None}
 
         return {"code": 500, "message": "会话删除失败", "data": None}
