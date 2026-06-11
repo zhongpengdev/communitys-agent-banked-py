@@ -118,11 +118,8 @@ def test_delete_session_forbidden_for_other_user(client, auth_headers):
 
 
 def test_delete_session_success(client, auth_headers):
-    mock_messages_result = [{"id": 1}]
-
     with patch("app.api.session.check_session_owner", return_value=True), \
-         patch("app.api.session.delete_session_service", return_value=True), \
-         patch("app.api.session.delete_messages", return_value=mock_messages_result):
+         patch("app.api.session.delete_session_service", return_value=True):
         response = client.delete("/delete-session?session_id=1", headers=auth_headers)
 
     body = response.json()
