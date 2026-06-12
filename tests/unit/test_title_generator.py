@@ -67,7 +67,7 @@ async def test_generate_title_passes_correct_model():
 
         call_kwargs = mock_client.messages.create.call_args[1]
         assert call_kwargs["model"] == CLAUDE_TITLE_MODEL
-        assert call_kwargs["max_tokens"] == 50
+        assert call_kwargs["max_tokens"] == 1024
 
 
 async def test_generate_title_passes_content_to_api():

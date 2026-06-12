@@ -13,6 +13,7 @@ from claude_agent_sdk import (
     ToolUseBlock,
     ToolResultBlock,
     ResultMessage,
+    StreamEvent,
 )
 from app.websocket.manager import manager
 from app.tools_mcp.server import community_server
@@ -64,6 +65,7 @@ class AgentSession:
             mcp_servers={"community": community_server},
             allowed_tools=_MCP_TOOLS,
             permission_mode="bypassPermissions",
+            include_partial_messages=True,
         )
         self._client = ClaudeSDKClient(options=options)
         await self._client.connect()
@@ -93,12 +95,43 @@ class AgentSession:
 
         full_response = ""
         last_tool_name: str | None = None
+        sent_text_by_block: list[str] = []
+
+        async def ensure_tool_completed():
+            nonlocal last_tool_name
+            if last_tool_name:
+                short_name = _strip_mcp_prefix(last_tool_name)
+                info = get_tool_display_info(short_name)
+                await manager.send_status(self.user_id, "tool_completed", {
+                    "tool": short_name,
+                    "display_name": info["display_name"],
+                    "message": f"{info['display_name']}执行完成",
+                    "icon": info["icon"],
+                    "category": info["category"],
+                })
+                last_tool_name = None
 
         await self._client.query(prompt)
 
         async for msg in self._client.receive_response():
-            if isinstance(msg, AssistantMessage):
-                for block in msg.content:
+            # 兼容单元测试 Mock 对象，测试环境 StreamEvent 可能为 MagicMock
+            is_stream_event = isinstance(msg, StreamEvent) if isinstance(StreamEvent, type) else (type(msg).__name__ == "StreamEvent")
+            if is_stream_event:
+                if msg.event.get("type") == "content_block_delta":
+                    index = msg.event.get("index", 0)
+                    delta = msg.event.get("delta", {})
+                    if "text" in delta:
+                        text_delta = delta["text"]
+                        if text_delta:
+                            await ensure_tool_completed()
+                            while len(sent_text_by_block) <= index:
+                                sent_text_by_block.append("")
+                            sent_text_by_block[index] += text_delta
+                            full_response += text_delta
+                            await manager.send_text_chunk(self.user_id, text_delta, is_final=False)
+
+            elif isinstance(msg, AssistantMessage):
+                for index, block in enumerate(msg.content):
                     if isinstance(block, ToolUseBlock):
                         last_tool_name = block.name
                         short_name = _strip_mcp_prefix(block.name)
@@ -112,34 +145,24 @@ class AgentSession:
                         })
 
                     elif isinstance(block, ToolResultBlock):
-                        if last_tool_name:
-                            short_name = _strip_mcp_prefix(last_tool_name)
-                            info = get_tool_display_info(short_name)
-                            await manager.send_status(self.user_id, "tool_completed", {
-                                "tool": short_name,
-                                "display_name": info["display_name"],
-                                "message": f"{info['display_name']}执行完成",
-                                "icon": info["icon"],
-                                "category": info["category"],
-                            })
-                            last_tool_name = None
+                        await ensure_tool_completed()
 
                     elif isinstance(block, TextBlock) and block.text:
-                        # 如果前一步是工具调用而尚未发送 tool_completed，在文本前补发
-                        if last_tool_name:
-                            short_name = _strip_mcp_prefix(last_tool_name)
-                            info = get_tool_display_info(short_name)
-                            await manager.send_status(self.user_id, "tool_completed", {
-                                "tool": short_name,
-                                "display_name": info["display_name"],
-                                "message": f"{info['display_name']}执行完成",
-                                "icon": info["icon"],
-                                "category": info["category"],
-                            })
-                            last_tool_name = None
-
-                        full_response += block.text
-                        await manager.send_text_chunk(self.user_id, block.text, is_final=False)
+                        while len(sent_text_by_block) <= index:
+                            sent_text_by_block.append("")
+                        sent = sent_text_by_block[index]
+                        if block.text.startswith(sent):
+                            remaining = block.text[len(sent):]
+                            if remaining:
+                                await ensure_tool_completed()
+                                sent_text_by_block[index] += remaining
+                                full_response += remaining
+                                await manager.send_text_chunk(self.user_id, remaining, is_final=False)
+                        else:
+                            await ensure_tool_completed()
+                            sent_text_by_block[index] = block.text
+                            full_response += block.text
+                            await manager.send_text_chunk(self.user_id, block.text, is_final=False)
 
             elif isinstance(msg, ResultMessage):
                 # 响应完成

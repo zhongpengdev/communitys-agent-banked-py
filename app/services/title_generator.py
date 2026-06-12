@@ -28,7 +28,7 @@ async def generate_title(content: str) -> str:
     try:
         message = await _client.messages.create(
             model=CLAUDE_TITLE_MODEL,
-            max_tokens=50,
+            max_tokens=1024,
             system="你是一个对话标题生成助手。根据用户输入，生成一个不超过 10 个汉字的简短标题。只返回标题文字，不加引号或解释。",
             messages=[{"role": "user", "content": content}],
         )
