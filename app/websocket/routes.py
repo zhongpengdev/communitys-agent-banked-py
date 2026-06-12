@@ -60,9 +60,8 @@ async def websocket_chat_handler(
 
             query_text = data.get("query", "")
             # 支持消息体中携带 sessionId 动态切换会话
-            current_session_id = (
-                data.get("session_id") or data.get("sessionId") or current_session_id
-            )
+            raw_sid = data.get("session_id") or data.get("sessionId")
+            current_session_id = int(raw_sid) if raw_sid is not None else current_session_id
             if current_session_id:
                 if not check_session_owner(current_session_id, user_id):
                     logger.warning(f"用户 {user_id} 尝试访问无效或无权限的会话: {current_session_id}，已重置")

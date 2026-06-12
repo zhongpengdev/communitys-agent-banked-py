@@ -93,6 +93,8 @@ class AgentSession:
         2. 流式将响应推送到 WebSocket
         3. 异步保存消息到数据库
         """
+        # 类型兜底：确保 session_id 为 int
+        session_id = int(session_id)
 
         # 检测会话切换：session_id 变化时重启 client，清空旧会话的 SDK 内部状态
         if self._current_session_id is not None and session_id != self._current_session_id:
