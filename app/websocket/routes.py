@@ -61,7 +61,7 @@ async def websocket_chat_handler(
             query_text = data.get("query", "")
             # 支持消息体中携带 sessionId 动态切换会话
             current_session_id = (
-                data.get("session_id") or data.get("sessionId") or current_session_id
+                data.get("sessionId") 
             )
             if current_session_id:
                 if not check_session_owner(current_session_id, user_id):
