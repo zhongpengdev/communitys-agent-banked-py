@@ -57,6 +57,7 @@ class AgentSession:
     def __init__(self, user_id: str):
         self.user_id = user_id
         self._client: ClaudeSDKClient | None = None
+        self._current_session_id: int | None = None
         self._history_seeded = False
 
     async def start(self):
@@ -79,6 +80,12 @@ class AgentSession:
             await self._client.disconnect()
             self._client = None
 
+    async def _restart(self):
+        """重启 client：断开旧连接并建立新连接，清空 SDK 内部对话状态"""
+        await self.stop()
+        await self.start()
+        self._history_seeded = False
+
     async def handle_message(self, session_id: int, user_input: str):
         """
         处理一条用户消息：
@@ -86,7 +93,12 @@ class AgentSession:
         2. 流式将响应推送到 WebSocket
         3. 异步保存消息到数据库
         """
-       
+
+        # 检测会话切换：session_id 变化时重启 client，清空旧会话的 SDK 内部状态
+        if self._current_session_id is not None and session_id != self._current_session_id:
+            logger.info(f"会话切换: {self._current_session_id} → {session_id}，重启 client")
+            await self._restart()
+        self._current_session_id = session_id
 
         # 加载历史对话
         if not self._history_seeded:
