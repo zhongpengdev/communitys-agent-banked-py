@@ -34,30 +34,40 @@ def _tool_pass_through(name, description, params=None):
 
 
 class FakeAssistantMessage:
-    def __init__(self, content=None):
+    def __init__(self, content=None, **kwargs):
         self.content = content or []
+        for k, v in kwargs.items():
+            setattr(self, k, v)
 
 
 class FakeTextBlock:
-    def __init__(self, text=""):
+    def __init__(self, text="", **kwargs):
         self.text = text
+        for k, v in kwargs.items():
+            setattr(self, k, v)
 
 
 class FakeToolUseBlock:
-    def __init__(self, name="", input=None):
+    def __init__(self, name="", input=None, **kwargs):
         self.name = name
         self.input = input or {}
+        for k, v in kwargs.items():
+            setattr(self, k, v)
 
 
 class FakeToolResultBlock:
-    def __init__(self, tool_use_id="", content=None):
+    def __init__(self, tool_use_id="", content=None, **kwargs):
         self.tool_use_id = tool_use_id
         self.content = content or []
+        for k, v in kwargs.items():
+            setattr(self, k, v)
 
 
 class FakeResultMessage:
-    def __init__(self):
+    def __init__(self, **kwargs):
         self.stop_reason = "end_turn"
+        for k, v in kwargs.items():
+            setattr(self, k, v)
 
 
 _mock_sdk = MagicMock()

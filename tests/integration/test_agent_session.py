@@ -133,6 +133,48 @@ async def test_handle_message_streams_text_chunks(AgentSession, sdk_classes):
     assert chunks[-1] == ("", True)
 
 
+async def test_handle_message_resets_sent_text_on_new_uuid(AgentSession, sdk_classes):
+    AssistantMessage, TextBlock, ToolUseBlock, ToolResultBlock, ResultMessage = sdk_classes
+    mock_client = _make_mock_client()
+
+    async def mock_receive():
+        # First turn: Tool call with reasoning
+        msg1 = AssistantMessage(uuid="msg-uuid-1", model="model")
+        msg1.content = [TextBlock("我先帮您查询一下梅西的信息。"), ToolUseBlock(id="tool-1", name="mcp__community__web_search", input={})]
+        yield msg1
+
+        # Second turn: Final answer after tool completion
+        msg2 = AssistantMessage(uuid="msg-uuid-2", model="model")
+        msg2.content = [TextBlock("根据搜索结果，梅西目前38岁。")]
+        yield msg2
+
+        yield ResultMessage()
+
+    mock_client.receive_response = mock_receive
+    chunks = []
+
+    async def capture_chunk(user_id, chunk, is_final=False):
+        chunks.append(chunk)
+
+    with patch("app.agent.runner.ClaudeSDKClient", return_value=mock_client), \
+         patch("app.agent.runner.manager") as mock_manager, \
+         patch("app.agent.runner._build_history_context", return_value=""):
+        mock_manager.send_status = AsyncMock()
+        mock_manager.send_text_chunk = AsyncMock(side_effect=capture_chunk)
+
+        session = AgentSession("user-1")
+        await session.start()
+        await session.handle_message(1, "梅西多大了")
+
+    # Combine all chunks
+    combined_chunks = "".join(chunks)
+    
+    # Without resetting, "根据搜索结果，梅西目前38岁。" would be appended twice because startswith failed.
+    # With resetting, it is only appended once.
+    assert combined_chunks.count("根据搜索结果，梅西目前38岁。") == 1
+    assert "我先帮您查询一下梅西的信息。" in combined_chunks
+
+
 async def test_handle_message_sends_completed_status(AgentSession, sdk_classes):
     _, _, _, _, ResultMessage = sdk_classes
     mock_client = _make_mock_client()

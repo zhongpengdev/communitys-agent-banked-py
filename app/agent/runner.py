@@ -113,7 +113,15 @@ class AgentSession:
 
         await self._client.query(prompt)
 
+        current_message_uuid: str | None = None
+
         async for msg in self._client.receive_response():
+            # Reset sent tracking when message uuid changes (e.g. from planning message to final response message)
+            msg_uuid = getattr(msg, "uuid", None) or getattr(msg, "message_id", None)
+            if msg_uuid and msg_uuid != current_message_uuid:
+                current_message_uuid = msg_uuid
+                sent_text_by_block = []
+
             # 兼容单元测试 Mock 对象，测试环境 StreamEvent 可能为 MagicMock
             is_stream_event = isinstance(msg, StreamEvent) if isinstance(StreamEvent, type) else (type(msg).__name__ == "StreamEvent")
             if is_stream_event:
