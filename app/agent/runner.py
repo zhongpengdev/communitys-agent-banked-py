@@ -52,15 +52,12 @@ class AgentSession:
     封装 ClaudeSDKClient，管理单个 WebSocket 连接的 Agent 会话。
     一个 WebSocket 连接对应一个 AgentSession，跨多条消息共享上下文。
 
-    支持同一连接内动态切换 session_id：检测到切换时自动重启 SDK 连接
-    （清空内部对话状态）并重新注入新会话的历史上下文。
     """
 
     def __init__(self, user_id: str):
         self.user_id = user_id
         self._client: ClaudeSDKClient | None = None
         self._history_seeded = False
-        self._current_session_id: int | None = None
 
     async def start(self):
         """建立与 Claude Agent SDK 的连接"""
@@ -74,10 +71,7 @@ class AgentSession:
         self._client = ClaudeSDKClient(options=options)
         await self._client.connect()
 
-    async def _restart(self):
-        """重启 SDK 连接，清空内部对话状态（用于会话切换时隔离上下文）"""
-        await self.stop()
-        await self.start()
+
 
     async def stop(self):
         """断开连接，释放资源"""
@@ -88,25 +82,11 @@ class AgentSession:
     async def handle_message(self, session_id: int, user_input: str):
         """
         处理一条用户消息：
-        1. 检测会话是否切换，若切换则重启 SDK 连接并重置历史标记
-        2. 向 Claude 发送消息（含历史上下文）
-        3. 流式将响应推送到 WebSocket
-        4. 异步保存消息到数据库
+        1. 向 Claude 发送消息（含历史上下文）
+        2. 流式将响应推送到 WebSocket
+        3. 异步保存消息到数据库
         """
-        # 检测会话切换：重启 client 清空 SDK 内部状态，并重新注入新会话的历史
-        old_session_id = self._current_session_id
-        session_changed = (
-            old_session_id is not None
-            and old_session_id != session_id
-        )
-        self._current_session_id = session_id
-
-        if session_changed:
-            logger.info(
-                f"用户 {self.user_id} 切换会话 {old_session_id} → {session_id}，重启 Agent 连接"
-            )
-            await self._restart()
-            self._history_seeded = False
+       
 
         # 加载历史对话
         if not self._history_seeded:
