@@ -113,17 +113,34 @@ class AgentSession:
 
         await self._client.query(prompt)
 
-        current_message_uuid: str | None = None
+        current_message_id: str | None = None
+        assistant_block_counter = 0
 
         async for msg in self._client.receive_response():
-            # Reset sent tracking when message uuid changes (e.g. from planning message to final response message)
-            msg_uuid = getattr(msg, "uuid", None) or getattr(msg, "message_id", None)
-            if msg_uuid and msg_uuid != current_message_uuid:
-                current_message_uuid = msg_uuid
-                sent_text_by_block = []
-
             # 兼容单元测试 Mock 对象，测试环境 StreamEvent 可能为 MagicMock
             is_stream_event = isinstance(msg, StreamEvent) if isinstance(StreamEvent, type) else (type(msg).__name__ == "StreamEvent")
+            
+            # Reset sent tracking when message ID changes (e.g. from planning message to final response message)
+            msg_id = None
+            if is_stream_event:
+                if msg.event.get("type") == "message_start":
+                    msg_id = msg.event.get("message", {}).get("id")
+            elif isinstance(msg, AssistantMessage):
+                msg_id = getattr(msg, "message_id", None) or getattr(msg, "uuid", None)
+
+            # 遇到新的 Message ID，或者用户消息、系统消息、结果消息时，重置计数器和发送缓存
+            msg_type_name = type(msg).__name__
+            should_reset = False
+            if msg_id and msg_id != current_message_id:
+                current_message_id = msg_id
+                should_reset = True
+            elif msg_type_name in ("UserMessage", "SystemMessage", "ResultMessage") or msg_type_name.endswith("ResultMessage"):
+                should_reset = True
+
+            if should_reset:
+                sent_text_by_block = []
+                assistant_block_counter = 0
+
             if is_stream_event:
                 if msg.event.get("type") == "content_block_delta":
                     index = msg.event.get("index", 0)
@@ -140,6 +157,10 @@ class AgentSession:
 
             elif isinstance(msg, AssistantMessage):
                 for index, block in enumerate(msg.content):
+                    # 使用 assistant_block_counter 作为真实的 block 索引以对齐 StreamEvent
+                    block_index = assistant_block_counter
+                    assistant_block_counter += 1
+
                     if isinstance(block, ToolUseBlock):
                         last_tool_name = block.name
                         short_name = _strip_mcp_prefix(block.name)
@@ -156,19 +177,19 @@ class AgentSession:
                         await ensure_tool_completed()
 
                     elif isinstance(block, TextBlock) and block.text:
-                        while len(sent_text_by_block) <= index:
+                        while len(sent_text_by_block) <= block_index:
                             sent_text_by_block.append("")
-                        sent = sent_text_by_block[index]
+                        sent = sent_text_by_block[block_index]
                         if block.text.startswith(sent):
                             remaining = block.text[len(sent):]
                             if remaining:
                                 await ensure_tool_completed()
-                                sent_text_by_block[index] += remaining
+                                sent_text_by_block[block_index] += remaining
                                 full_response += remaining
                                 await manager.send_text_chunk(self.user_id, remaining, is_final=False)
                         else:
                             await ensure_tool_completed()
-                            sent_text_by_block[index] = block.text
+                            sent_text_by_block[block_index] = block.text
                             full_response += block.text
                             await manager.send_text_chunk(self.user_id, block.text, is_final=False)
 
@@ -182,6 +203,7 @@ class AgentSession:
 
         # 异步保存（不阻塞响应）
         if session_id and full_response:
+            print("------fullresponse", full_response)
             asyncio.create_task(_save(session_id, user_input, full_response))
 
 
