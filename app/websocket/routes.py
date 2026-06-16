@@ -8,7 +8,7 @@ import asyncio
 from loguru import logger
 from fastapi import WebSocket, WebSocketDisconnect
 from app.websocket.manager import manager
-from app.database.service.session import create_session, update_session_title, check_session_owner
+from app.services.session import create_session, update_session_title, check_session_owner
 from app.services.title_generator import generate_title
 from app.utils.context import set_request_token
 
@@ -60,9 +60,9 @@ async def websocket_chat_handler(
 
             query_text = data.get("query", "")
             # 支持消息体中携带 sessionId 动态切换会话
-            current_session_id = (
-                data.get("sessionId") 
-            )
+            raw_sid = data.get("session_id")
+            current_session_id = int(raw_sid) if raw_sid is not None else None 
+            
             if current_session_id:
                 if not check_session_owner(current_session_id, user_id):
                     logger.warning(f"用户 {user_id} 尝试访问无效或无权限的会话: {current_session_id}，已重置")

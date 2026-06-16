@@ -18,7 +18,7 @@ from claude_agent_sdk import (
 from app.websocket.manager import manager
 from app.tools_mcp.server import community_server
 from app.tools.tool_metadata import get_tool_display_info
-from app.database.service.message import save_message, get_messages
+from app.services.message import save_message, get_messages
 from app.core.config import settings
 from app.services.memory import RedisMemoryManager
 from loguru import logger
@@ -93,6 +93,8 @@ class AgentSession:
         2. 流式将响应推送到 WebSocket
         3. 异步保存消息到数据库
         """
+        # 类型兜底：确保 session_id 为 int
+        session_id = int(session_id)
 
         # 检测会话切换：session_id 变化时重启 client，清空旧会话的 SDK 内部状态
         if self._current_session_id is not None and session_id != self._current_session_id:
@@ -249,7 +251,7 @@ async def _build_history_context(session_id: int) -> str:
             return "以下是用户和社区助手之前的历史对话：\n" + "\n".join(lines) + "\n\n"
                 
         # 降级策略：缓存未命中，从冷数据库备份加载
-        from app.database.service.message import get_recent_messages
+        from app.services.message import get_recent_messages
         
         res = get_recent_messages(session_id)
         if not res:
