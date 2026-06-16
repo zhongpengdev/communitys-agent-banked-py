@@ -31,7 +31,7 @@ def test_strip_mcp_prefix_extracts_last_segment():
 
 @pytest.mark.asyncio
 @patch("app.agent.runner.RedisMemoryManager.get_message")
-@patch("app.database.service.message.get_recent_messages")
+@patch("app.services.message.get_recent_messages")
 async def test_build_history_context_returns_empty_when_no_data(mock_get_recent_messages, mock_redis_get):
     # Mock Redis to return empty list
     mock_redis_get.return_value = []
@@ -45,7 +45,7 @@ async def test_build_history_context_returns_empty_when_no_data(mock_get_recent_
 
 @pytest.mark.asyncio
 @patch("app.agent.runner.RedisMemoryManager.get_message")
-@patch("app.database.service.message.get_recent_messages")
+@patch("app.services.message.get_recent_messages")
 @patch("app.agent.runner.RedisMemoryManager.push_messages_batch")
 async def test_build_history_context_formats_messages(mock_redis_push_batch, mock_get_recent_messages, mock_redis_get):
     # Mock Redis to return empty list
@@ -82,7 +82,7 @@ async def test_build_history_context_hits_redis_cache(mock_redis_get):
 
 @pytest.mark.asyncio
 @patch("app.agent.runner.RedisMemoryManager.get_message")
-@patch("app.database.service.message.get_recent_messages")
+@patch("app.services.message.get_recent_messages")
 async def test_build_history_context_returns_empty_on_exception(mock_get_recent_messages, mock_redis_get):
     mock_redis_get.side_effect = Exception("Redis error")
     result = await _build_history_context(1)

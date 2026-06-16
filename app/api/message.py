@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from app.core.security import verify_token
-from app.database.service.message import get_messages
-from app.database.service.session import check_session_owner
+from app.services.message import get_messages
+from app.services.session import check_session_owner
 from app.schemas import BaseResponse, MessageResponse
 
 router = APIRouter(prefix="/message", tags=["消息"])

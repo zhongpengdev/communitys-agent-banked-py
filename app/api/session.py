@@ -1,9 +1,13 @@
 from fastapi import APIRouter, Depends, Query
 from app.core.security import verify_token
-from app.database.service.session import create_session
+from app.services.session import (
+    create_session,
+    delete_session_service,
+    rename_session_service,
+    check_session_owner,
+    get_sessions_paginated,
+)
 from app.services.title_generator import generate_title
-from app.database.service.session import delete_session_service, rename_session_service
-from app.database.service.session import check_session_owner
 from app.schemas import (
     BaseResponse,
     PaginatedResponse,
@@ -12,7 +16,6 @@ from app.schemas import (
     NewSessionRequest,
     SessionRenameRequest
 )
-from app.database.service.session import get_sessions_paginated
 from loguru import logger
 
 router = APIRouter(tags=["会话"])
