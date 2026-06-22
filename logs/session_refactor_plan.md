@@ -1,214 +1,409 @@
-# 工业级会话查询重构方案：时区安全的前端分组与后端缓存加速
+# 工业级会话查询重构方案：基于 ZSET 与 String 索引数据分离的懒加载分页缓存架构
 
-本项目目前采用传统的 `OFFSET` / `LIMIT` 分页查询会话列表，这在工业级场景下面临两个痛点：
-1. **时区一致性与体验限制**：传统的后端分页无法自适应多时区用户的本地时间划分；在服务端对自然日（今天、昨天、过去7天等）进行分组，会导致跨国用户的自然日边界与本地系统时间产生严重偏差。
-2. **深度分页性能瓶颈**：随着用户历史会话的不断累积，传统 `OFFSET` 分页查询性能呈线性下降，且每次请求都需穿透至数据库执行 `COUNT` 与 `SELECT`。
+本项目目前采用传统的 `OFFSET` / `LIMIT` 分页查询会话历史，在面临海量历史会话时，存在深度分页数据库性能下降以及缺乏缓存加速的隐患。
 
-本方案针对这些痛点进行重构设计，核心原则是：**后端负责扁平数据的高性能缓存（基于 Redis ZSET）与数据库检索；前端负责时区安全的时间分组计算。**
+之前曾考虑过将“全量会话数据序列化为 JSON 塞入单个用户的 ZSET 缓存”的方案，但这在工业级场景下有重大缺陷：
+1. **BigKey 隐患**：若用户历史会话数量较多，直接在单个 ZSET 的 Member 中存入完整 JSON 详情，会导致该 ZSET 的体积迅速膨胀，成为 Redis 经典 BigKey 隐患，甚至在并发增删、更新时导致 Redis 线程阻塞。
+2. **全量拉取网卡过载**：全量拉取用户的所有会话数据返回给前端，在用户会话数据上千条时，网卡吞吐量与网络传输延迟将成为严重瓶颈。
+3. **缓存命中率低下与整体击穿**：每当用户重命名标题（Rename）或删除（Delete）单个会话时，都需要将整个 ZSET 彻底删除（DEL），导致缓存高频失效整体击穿，穿透至数据库。
+
+为了彻底解决以上问题，本项目设计了**方案 A（索引与详情分离缓存架构）**，将 ZSET 仅用作轻量级的 ID 排序索引，具体对象内容存储在 String 结构中，并使用 MGET 批量按需分页懒加载。
 
 ---
 
-## 1. 架构设计图
+## 1. 架构设计图 (Index-Data Split)
 
+为防止 VS Code Markdown 预览时由于图片纵向过长导致排版被压缩变形，以下将 4 个业务核心数据流拆分为独立的横向（Left-to-Right）流程图展示：
+
+### 1.1 分页获取会话列表 (Read Flow)
 ```mermaid
-graph TD
-    A[前端请求会话列表 API] --> B{Redis ZSET 缓存是否存在?}
-    B -- 是 (Cache Hit) --> C[读取扁平的会话列表 JSON 数据]
-    B -- 否 (Cache Miss) --> D[从 DB 读取全部历史会话元数据]
-    D --> E[异步回写缓存至 Redis ZSET]
-    C --> F[前端利用系统时区计算分组]
-    E --> F
-    F --> G[按 今天/昨天/过去7天/过去30天/更早 渲染 UI]
+flowchart LR
+    classDef db fill:#f9f,stroke:#333,stroke-width:1px;
+    classDef redis fill:#9cf,stroke:#333,stroke-width:1px;
+
+    R1[API 路由收到请求 page, page_size] --> R2{user:sessions:user_id ZSET 存在?}
+    R2 -- 否 (Cache Miss) --> R3[(1.1 DB 覆盖索引扫描查询全量 ID + 时间戳)]:::db
+    R3 --> R4[1.2 异步 Pipeline ZADD 写入 ZSET 并设 1天 TTL]:::redis
+    R4 --> R5[1.3 ZREVRANGE 分页读取当前页 session_ids]:::redis
+    R2 -- 是 (Cache Hit) --> R5
+    R5 --> R6[1.4 批量 MGET 检索详情 String 列表]:::redis
+    R6 --> R7{当前页详情是否全部命中?}
+    R7 -- 否 (部分 Miss) --> R8[(1.5 单条主键回源 DB 查缺失会话详情)]:::db
+    R8 --> R9[1.6 异步覆写单条 String 详情缓存]:::redis
+    R9 --> R10[1.7 组装列表与 ZCARD 总条数返回]
+    R7 -- 是 (全部 Hit) --> R10
 ```
 
-### 1.1 核心设计优势
-* **时区安全**：后端数据以带有标准 UTC 时区标识（如 `Z` 或 `+00:00`）的 ISO 8601 字符串返回。前端利用浏览器原生系统时区将时间戳转换并归类，彻底解决跨国用户的时区边界问题。
-* **高响应性与低延迟**：通过缓存单个用户的所有扁平会话列表（元数据量通常小于 200 条，内存消耗极小），读取操作只需 $O(\log N)$ 的时间复杂度，直接避免了每次翻页请求穿透至数据库。
+### 1.2 新建会话 (Create Flow)
+```mermaid
+flowchart LR
+    classDef db fill:#f9f,stroke:#333,stroke-width:1px;
+    classDef redis fill:#9cf,stroke:#333,stroke-width:1px;
+
+    C1[新建会话 API 收到请求] --> C2[(2.1 写入 DB 生成会话记录与自增 ID)]:::db
+    C2 --> C3[2.2 异步 Pipeline ZADD 写入索引并 SET 详情 String]:::redis
+    C3 --> C4[2.3 返回新建成功响应]
+```
+
+### 1.3 修改会话标题 (Update Flow)
+```mermaid
+flowchart LR
+    classDef db fill:#f9f,stroke:#333,stroke-width:1px;
+    classDef redis fill:#9cf,stroke:#333,stroke-width:1px;
+
+    U1[更新会话标题 API 收到请求] --> U2[(3.1 更新 DB 会话标题)]:::db
+    U2 --> U3[(3.2 查 DB 新内容并覆写对应 String 详情缓存)]:::redis
+    U3 --> U4[3.3 返回成功响应 - ZSET 索引保持不变]
+```
+
+### 1.4 删除会话 (Delete Flow)
+```mermaid
+flowchart LR
+    classDef db fill:#f9f,stroke:#333,stroke-width:1px;
+    classDef redis fill:#9cf,stroke:#333,stroke-width:1px;
+
+    D1[删除会话 API 收到请求] --> D2[(4.1 级联删除 DB 会话与所有消息记录)]:::db
+    D2 --> D3[4.2 Pipeline ZREM 移除索引并 DEL 详情 String]:::redis
+    D3 --> D4[4.3 返回删除成功响应]
+```
 
 ---
 
 ## 2. 数据库与索引优化
 
-在 PostgreSQL 中，建立复合索引以支持覆盖索引扫描（Index-Only Scan），避免因回表排序（Filesort）导致的大表查询延迟。
+为配合 ZSET 索引的高效回源构建，在 PostgreSQL 数据库中需对 `sessions` 表建立包含附加列的覆盖索引（Index-Only Scan），避免由于回表导致的回源排序（Filesort）延迟。
 
-### 2.1 物理索引创建
-必须在 [SessionModel](file:///D:/Projects/code/python/communitys-agent-banked-py/app/models/session.py) 所在的数据库表上建立复合索引：
+### 2.1 物理索引创建 (PostgreSQL 11+ 最佳实践)
+推荐在会话表上创建包含附加列的覆盖索引：
 ```sql
-CREATE INDEX idx_sessions_user_created ON sessions (user_id, created_at DESC);
+CREATE INDEX idx_sessions_user_created_cover ON sessions (user_id, created_at DESC) INCLUDE (id);
 ```
-* **原理**：该复合索引能让数据库直接根据 `user_id` 过滤，并按照 `created_at` 降序从索引中直接读取所需字段，无需进行额外的内存或磁盘排序。
+* **Index-Only Scan (零回表)**：构建 ZSET 索引时，回源查询仅需 `id` 和 `created_at` 字段。通过 `INCLUDE (id)`，PostgreSQL 只需要从缓存的索引页中直接获取这些信息并构建 ZSET，实现快速回源构建。
 
 ---
 
-## 3. Redis 缓存方案设计 (ZSET 架构)
+## 3. Redis 缓存数据结构设计
 
-我们采用 **Redis Sorted Set (ZSET)** 来缓存扁平的历史会话列表，实现微秒级的高频读取。
+### 3.1 会话有序索引 (ZSET)
+* **Key**：`user:sessions:{user_id}`
+* **Score**：`created_at` 的 Unix 时间戳（`float` 类型，用于按时间降序极速分页检索）
+* **Member**：`session_id`（如 `"32"`）
+* **TTL**：1 天（86400 秒）
 
-### 3.1 缓存数据结构
-* **Key 设计**：`user:sessions:{user_id}`
-* **数据结构**：`Sorted Set (ZSET)`
-  * **Score**：`created_at` 的 Unix 时间戳（float 类型，保障按时间降序极速检索）。
-  * **Member**：会话的 JSON 序列化字符串，例如：
-    ```json
-    {"id": 32, "title": "物业缴费咨询", "created_at": "2026-06-16T04:00:00Z"}
-    ```
-
-### 3.2 缓存更新策略 (Write-Through + Cache-Aside)
-
-1. **读取列表 (Read Path)**:
-   * 尝试通过 `ZREVRANGEBYSCORE user:sessions:{user_id} +inf -inf` 获取该用户的所有会话缓存。
-   * 如果缓存存在（Cache Hit），直接返回扁平数据。
-   * 如果缓存不存在（Cache Miss），回源数据库加载，写入 Redis ZSET，并设置过期时间（如 1 天）。
-2. **创建会话 (Create Path)**:
-   * 写入数据库成功后，同步将新生成的会话通过 `ZADD` 写入对应的 ZSET 中。
-3. **重命名或删除 (Update / Delete Path)**:
-   * 在 [update_session_title](file:///D:/Projects/code/python/communitys-agent-banked-py/app/database/service/session.py#L59)、[rename_session_service](file:///D:/Projects/code/python/communitys-agent-banked-py/app/database/service/session.py#L112) 或 [delete_session_service](file:///D:/Projects/code/python/communitys-agent-banked-py/app/database/service/session.py#L95) 中，操作数据库成功后，直接对对应的 Redis Key 执行 `DEL`，利用下一次 Read Path 的 Cache Miss 自动拉取最新的数据库记录重建缓存，以保证缓存的强一致性并规避脏写。
+### 3.2 会话详情缓存 (String)
+* **Key**：`session:detail:{session_id}`
+* **Value**：JSON 序列化的会话详情字符串，例如：
+  ```json
+  {"id": 32, "user_id": "9527", "title": "物业费缴费咨询", "created_at": "2026-06-16T04:00:00Z"}
+  ```
+* **TTL**：7 天（604800 秒）
 
 ---
 
-## 4. 后端服务代码框架 (Python)
+## 4. 后端修改指南及真实要写的代码
 
-在 [session.py](file:///D:/Projects/code/python/communitys-agent-banked-py/app/database/service/session.py) 中，将原有的 [get_sessions_paginated](file:///D:/Projects/code/python/communitys-agent-banked-py/app/database/service/session.py#L6) 弃用，替换为以下不分页的扁平列表缓存方法：
+为了落地该方案，后端需要修改两个文件：
+1. **仓储层** [app/database/repository/session.py](file:///D:/Projects/code/python/communitys-agent-banked-py/app/database/repository/session.py) ：废弃原有的 `get_sessions_paginated` 方法，新增两个用于细粒度回源和覆盖索引查询的函数。
+2. **服务层** [app/services/session.py](file:///D:/Projects/code/python/communitys-agent-banked-py/app/services/session.py) ：引入 `redis_client`，完全重写 `get_sessions_paginated`、`create_session`、`rename_session_service` 以及 `delete_session_service`，将缓存编排逻辑深度集成。
 
+### 4.1 仓储层修改：[app/database/repository/session.py](file:///D:/Projects/code/python/communitys-agent-banked-py/app/database/repository/session.py)
+
+#### 哪里改成什么：
+*   **废弃/保留原有的** `get_sessions_paginated`，改在服务层统一接管分页和缓存决策。
+*   **新增** `get_session_by_id` 方法，支持单个详情回源。
+*   **新增** `get_user_session_ids_and_created_at` 方法，只查询 ID 和时间，实现覆盖索引扫描，用于高效重建缓存索引。
+
+#### 真实要写的代码：
+```python
+def get_session_by_id(session_id: int):
+    """
+    根据会话 ID 精准查询会话元数据（详情回源时使用）
+    """
+    db = SessionLocal()
+    try:
+        session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+        if session:
+            return {
+                "id": session.id,
+                "user_id": session.user_id,
+                "title": session.title,
+                "created_at": session.created_at.isoformat() if session.created_at else None
+            }
+        return None
+    finally:
+        db.close()
+
+
+def get_user_session_ids_and_created_at(user_id: str):
+    """
+    仅拉取用户的会话 ID 和创建时间（构建 ZSET 缓存时使用，覆盖索引扫描）
+    """
+    db = SessionLocal()
+    try:
+        sessions = (
+            db.query(SessionModel.id, SessionModel.created_at)
+            .filter(SessionModel.user_id == str(user_id))
+            .all()
+        )
+        return [{"id": s.id, "created_at": s.created_at} for s in sessions]
+    finally:
+        db.close()
+```
+
+---
+
+### 4.2 服务层修改：[app/services/session.py](file:///D:/Projects/code/python/communitys-agent-banked-py/app/services/session.py)
+
+#### 哪里改成什么：
+*   **头部引入** 异步 Redis 全局客户端 `from app.core.redis import redis_client`。
+*   **完全重写** [get_sessions_paginated](file:///D:/Projects/code/python/communitys-agent-banked-py/app/services/session.py#L14)，实现 `ZREVRANGE` 分页结合 `MGET` 的二级懒加载查询逻辑。
+*   **完全重写** [create_session](file:///D:/Projects/code/python/communitys-agent-banked-py/app/services/session.py#L21)，写入数据库后，同步将 ID 添加入 ZSET 缓存，并将详情写入 String 缓存。
+*   **完全重写** [rename_session_service](file:///D:/Projects/code/python/communitys-agent-banked-py/app/services/session.py#L42)，标题修改后仅修改对应的 String 详情缓存，保持 ZSET 命中率 100%。
+*   **完全重写** [delete_session_service](file:///D:/Projects/code/python/communitys-agent-banked-py/app/services/session.py#L35)，添加传入 `user_id`，并使用 Pipeline 同步移除 ZSET 项和删除对应的 String 键值。
+
+#### 真实要写的代码：
 ```python
 import json
 import asyncio
 from datetime import datetime
-from app.services.memory import RedisMemoryManager
-from app.core.database import SessionLocal
-from app.models.session import SessionModel
+from loguru import logger
+from app.core.redis import redis_client
+from app.database.repository.session import (
+    create_session as db_create_session,
+    delete_session_service as db_delete_session_service,
+    rename_session_service as db_rename_session_service,
+    check_session_owner as db_check_session_owner,
+    update_session_title as db_update_session_title,
+    get_session_by_id as db_get_session_by_id,
+    get_user_session_ids_and_created_at as db_get_user_session_ids_and_created_at,
+    get_sessions_paginated as db_get_sessions_paginated, # 异常时降级备用
+)
 
-CACHE_EXPIRE_SECONDS = 86400
+INDEX_CACHE_EXPIRE = 86400       # ZSET 索引缓存 1天 (秒)
+DETAIL_CACHE_EXPIRE = 604800     # 详情缓存 7天 (秒)
 
-async def get_flat_sessions(user_id: str) -> list:
+
+async def get_sessions_paginated(user_id: str, page: int = 1, page_size: int = 10) -> dict:
     """
-    极速获取用户的扁平会话列表（引入 ZSET 缓存）
+    分页懒加载获取会话历史列表 (ZSET + MGET 索引数据分离架构)
+    由于 redis_client 已配置 decode_responses=True，返回值均为 string 类型
     """
-    cache_key = f"user:sessions:{user_id}"
+    zset_key = f"user:sessions:{user_id}"
+    start = (page - 1) * page_size
+    stop = start + page_size - 1
     
-    # 1. 尝试从 Redis 读取 ZSET 缓存
+    # 1. 检查 ZSET 索引缓存是否存在，若不存在则回源构建
     try:
-        cached_data = await RedisMemoryManager.zrevrange(cache_key, 0, -1)
-        if cached_data:
-            return [json.loads(item) for item in cached_data]
+        exists = await redis_client.exists(zset_key)
+        if not exists:
+            await _rebuild_user_session_index(user_id, zset_key)
     except Exception as e:
-        logger.error(f"Redis 读取失败: {e}")
-        
-    # 2. 缓存未命中 (Cache Miss)，回源数据库查询
-    db = SessionLocal()
+        logger.error(f"Redis 检查索引失败，降级回源 DB: {e}")
+        return db_get_sessions_paginated(user_id, page, page_size)
+
+    # 2. 从 ZSET 分页获取当前页的 session_id 列表，并获取总数 (ZCARD)
     try:
-        sessions_db = (
-            db.query(SessionModel)
-            .filter(SessionModel.user_id == str(user_id))
-            .order_by(SessionModel.created_at.desc())
-            .all()
-        )
+        async with redis_client.pipeline(transaction=True) as pipe:
+            pipe.zrevrange(zset_key, start, stop)
+            pipe.zcard(zset_key)
+            session_ids, total_count = await pipe.execute()
+    except Exception as e:
+        logger.error(f"Redis 分页查询索引失败: {e}")
+        return db_get_sessions_paginated(user_id, page, page_size)
+
+    # ZSET 中可能存在空索引防击穿占位符
+    if "placeholder" in session_ids:
+        session_ids = [sid for sid in session_ids if sid != "placeholder"]
+        total_count = max(0, total_count - 1)
+
+    if not session_ids:
+        return {"items": [], "total": 0, "page": page, "page_size": page_size}
+
+    # 3. 批量 MGET 获取这组 session_id 的详情缓存
+    detail_keys = [f"session:detail:{sid}" for sid in session_ids]
+    try:
+        cached_details = await redis_client.mget(detail_keys)
+    except Exception as e:
+        logger.error(f"Redis 批量获取会话详情失败: {e}")
+        cached_details = [None] * len(session_ids)
+
+    # 4. 遍历详情结果，对缺失缓存的 session_id 进行单条回源并回写
+    items = []
+    for i, sid in enumerate(session_ids):
+        detail_json = cached_details[i]
         
-        sessions = [{
-            "id": s.id,
-            "user_id": s.user_id,
-            "title": s.title,
-            "created_at": s.created_at.isoformat() + "Z" if s.created_at else None # 显式标记 UTC 时区
-        } for s in sessions_db]
+        if detail_json:
+            try:
+                items.append(json.loads(detail_json))
+            except Exception as parse_err:
+                logger.error(f"解析会话详情缓存失败: {parse_err}")
+                detail_json = None
+                
+        if not detail_json:
+            # 缓存未命中，精准回源 DB 并回写缓存
+            session_data = db_get_session_by_id(int(sid))
+            if session_data:
+                items.append(session_data)
+                # 异步单条回写 String 详情缓存
+                asyncio.create_task(
+                    redis_client.set(
+                        f"session:detail:{sid}", 
+                        json.dumps(session_data), 
+                        ex=DETAIL_CACHE_EXPIRE
+                    )
+                )
+
+    return {
+        "items": items,
+        "total": total_count
+    }
+
+
+async def _rebuild_user_session_index(user_id: str, zset_key: str):
+    """
+    回源 DB 加载该用户所有的会话 ID 与时间戳，并重建 ZSET 索引缓存
+    """
+    try:
+        sessions_db = db_get_user_session_ids_and_created_at(user_id)
         
-        # 3. 异步回写缓存到 Redis
-        if sessions:
-            asyncio.create_task(_write_sessions_to_cache(cache_key, sessions))
+        if not sessions_db:
+            # 写入空缓存占位符以防止缓存穿透，设置较短的过期时间 (60秒)
+            async with redis_client.pipeline(transaction=True) as pipe:
+                pipe.delete(zset_key)
+                pipe.zadd(zset_key, {"placeholder": 0})
+                pipe.expire(zset_key, 60)
+                await pipe.execute()
+            return
+
+        async with redis_client.pipeline(transaction=True) as pipe:
+            pipe.delete(zset_key)
+            for s in sessions_db:
+                # 优先获取 created_at，缺省使用当前时间戳保证排序
+                created_at = s["created_at"]
+                score = created_at.timestamp() if isinstance(created_at, datetime) else 0
+                pipe.zadd(zset_key, {str(s["id"]): score})
+            pipe.expire(zset_key, INDEX_CACHE_EXPIRE)
+            await pipe.execute()
+    except Exception as e:
+        logger.error(f"重建用户 ZSET 会话索引缓存失败: {e}")
+
+
+def create_session(user_id: int, title: str) -> dict:
+    """
+    同步创建会话记录，并异步将其 ID 添加入 ZSET 缓存，同时直接写入 String 详情缓存
+    """
+    session_res = db_create_session(user_id, title)
+    if not session_res:
+        return {}
+        
+    session_id = session_res["id"]
+    created_at_str = session_res["created_at"]
+    
+    # 转换为用于 ZSET 排序的 score
+    try:
+        # 兼容带 'Z' 的 UTC 字符串时间转换
+        dt_str = created_at_str.replace("Z", "+00:00") if created_at_str else None
+        score = datetime.fromisoformat(dt_str).timestamp() if dt_str else datetime.utcnow().timestamp()
+    except Exception:
+        score = datetime.utcnow().timestamp()
+
+    zset_key = f"user:sessions:{user_id}"
+    detail_data = {
+        "id": session_id,
+        "user_id": str(user_id),
+        "title": title,
+        "created_at": created_at_str
+    }
+    
+    # 异步同步写入 Redis 索引与详情
+    async def _write_cache():
+        try:
+            async with redis_client.pipeline(transaction=True) as pipe:
+                # 1. 写入 ZSET 索引
+                pipe.zadd(zset_key, {str(session_id): score})
+                # 2. 写入 String 详情
+                pipe.set(f"session:detail:{session_id}", json.dumps(detail_data), ex=DETAIL_CACHE_EXPIRE)
+                await pipe.execute()
+        except Exception as err:
+            logger.error(f"创建会话同步写入缓存失败: {err}")
             
-        return sessions
-    finally:
-        db.close()
+    asyncio.create_task(_write_cache())
+    return session_res
 
-async def _write_sessions_to_cache(cache_key: str, sessions: list):
-    try:
-        pipe = RedisMemoryManager.pipeline()
-        pipe.delete(cache_key)
-        for s in sessions:
-            # 使用时间戳作为分值确保 ZSET 顺序
-            dt = datetime.fromisoformat(s["created_at"].replace("Z", "+00:00"))
-            score = dt.timestamp() if s["created_at"] else 0
-            pipe.zadd(cache_key, {json.dumps(s): score})
-        pipe.expire(cache_key, CACHE_EXPIRE_SECONDS)
-        await pipe.execute()
-    except Exception as e:
-        logger.error(f"回写 Redis 缓存失败: {e}")
-```
 
----
+def check_session_owner(session_id: int, user_id: str) -> bool:
+    """
+    检查会话归属权
+    """
+    return db_check_session_owner(session_id, user_id)
 
-## 5. 前端分组算法实现 (TypeScript)
 
-前端在拉取接口数据后，在本地计算出用户时区下的自然日边界，实现高精度的分组渲染。
+def delete_session_service(session_id: int, user_id: str) -> bool:
+    """
+    删除会话，同步级联删除数据库，并清理 Redis 索引与详情
+    """
+    db_success = db_delete_session_service(session_id)
+    if not db_success:
+        return False
+        
+    # 同步异步清理 Redis
+    zset_key = f"user:sessions:{user_id}"
+    detail_key = f"session:detail:{session_id}"
+    
+    async def _clean_cache():
+        try:
+            async with redis_client.pipeline(transaction=True) as pipe:
+                pipe.zrem(zset_key, str(session_id))
+                pipe.delete(detail_key)
+                await pipe.execute()
+        except Exception as err:
+            logger.error(f"删除会话时清理缓存失败: {err}")
+            
+    asyncio.create_task(_clean_cache())
+    return True
 
-```typescript
-export interface Session {
-  id: number;
-  user_id: string;
-  title: string;
-  created_at: string;
-}
 
-export interface GroupedSessions {
-  today: Session[];
-  yesterday: Session[];
-  last7Days: Session[];
-  last30Days: Session[];
-  earlier: Session[];
-}
+def rename_session_service(session_id: int, new_title: str) -> bool:
+    """
+    重命名会话，同步写 DB，并精确单条覆盖写入 String 详情缓存，保持 ZSET 命中率 100%
+    """
+    db_success = db_rename_session_service(session_id, new_title)
+    if not db_success:
+        return False
+        
+    # 单条覆盖覆写 String 详情缓存，杜绝大 Key 频繁重建
+    detail_key = f"session:detail:{session_id}"
+    
+    async def _update_cache():
+        session_data = db_get_session_by_id(session_id)
+        if session_data:
+            try:
+                await redis_client.set(detail_key, json.dumps(session_data), ex=DETAIL_CACHE_EXPIRE)
+            except Exception as err:
+                logger.error(f"覆盖写入会话详情缓存失败: {err}")
+                
+    asyncio.create_task(_update_cache())
+    return True
 
-/**
- * 将平铺的会话列表根据用户本地系统的时区和当前时间进行分组归类
- */
-export function groupSessionsByLocalDate(sessions: Session[]): GroupedSessions {
-  const grouped: GroupedSessions = {
-    today: [],
-    yesterday: [],
-    last7Days: [],
-    last30Days: [],
-    earlier: []
-  };
 
-  const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-  
-  const yesterdayStart = new Date(todayStart.getTime() - ONE_DAY_MS);
-  const sevenDaysAgoStart = new Date(todayStart.getTime() - 7 * ONE_DAY_MS);
-  const thirtyDaysAgoStart = new Date(todayStart.getTime() - 30 * ONE_DAY_MS);
-
-  const todayStartTime = todayStart.getTime();
-  const yesterdayStartTime = yesterdayStart.getTime();
-  const sevenDaysAgoStartTime = sevenDaysAgoStart.getTime();
-  const thirtyDaysAgoStartTime = thirtyDaysAgoStart.getTime();
-
-  for (const session of sessions) {
-    if (!session.created_at) {
-      grouped.earlier.push(session);
-      continue;
-    }
-
-    // 浏览器会自动将服务端传回的 UTC ISO 时间转为本机时区的 Date 对象
-    const createdDate = new Date(session.created_at);
-    const createdTime = createdDate.getTime();
-
-    if (isNaN(createdTime)) {
-      grouped.earlier.push(session);
-      continue;
-    }
-
-    if (createdTime >= todayStartTime) {
-      grouped.today.push(session);
-    } else if (createdTime >= yesterdayStartTime) {
-      grouped.yesterday.push(session);
-    } else if (createdTime >= sevenDaysAgoStartTime) {
-      grouped.last7Days.push(session);
-    } else if (createdTime >= thirtyDaysAgoStartTime) {
-      grouped.last30Days.push(session);
-    } else {
-      grouped.earlier.push(session);
-    }
-  }
-
-  return grouped;
-}
+def update_session_title(session_id: int, title: str):
+    """
+    修改标题 (供 WebSocket 处理器后台任务使用)
+    """
+    session_res = db_update_session_title(session_id, title)
+    if not session_res:
+        return {}
+        
+    detail_key = f"session:detail:{session_id}"
+    
+    async def _update_cache():
+        session_data = db_get_session_by_id(session_id)
+        if session_data:
+            try:
+                await redis_client.set(detail_key, json.dumps(session_data), ex=DETAIL_CACHE_EXPIRE)
+            except Exception as err:
+                logger.error(f"覆盖写入会话详情缓存失败: {err}")
+                
+    asyncio.create_task(_update_cache())
+    return session_res
 ```

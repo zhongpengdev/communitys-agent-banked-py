@@ -124,3 +124,39 @@ def rename_session_service(session_id: int, new_title: str):
         raise e
     finally:
         db.close()
+
+
+def get_session_by_id(session_id: int):
+    """
+    根据会话 ID 精准查询会话元数据（详情回源时使用）
+    """
+    db = SessionLocal()
+    try:
+        session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+        if session:
+            return {
+                "id": session.id,
+                "user_id": session.user_id,
+                "title": session.title,
+                "created_at": session.created_at.isoformat() if session.created_at else None
+            }
+        return None
+    finally:
+        db.close()
+
+
+def get_user_session_ids_and_created_at(user_id: str):
+    """
+    仅拉取用户的会话 ID 和创建时间（构建 ZSET 缓存时使用，覆盖索引扫描）
+    """
+    db = SessionLocal()
+    try:
+        sessions = (
+            db.query(SessionModel.id, SessionModel.created_at)
+            .filter(SessionModel.user_id == str(user_id))
+            .all()
+        )
+        return [{"id": s.id, "created_at": s.created_at} for s in sessions]
+    finally:
+        db.close()
+

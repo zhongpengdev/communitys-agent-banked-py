@@ -32,7 +32,7 @@ async def get_session_history(
     logger.info(f"用户 ID: {user_id}")
 
     try:
-        result = get_sessions_paginated(user_id, page, page_size)
+        result = await get_sessions_paginated(user_id, page, page_size)
 
         logger.info(f"---获取历史记录成功，{result}----")
 
@@ -53,9 +53,6 @@ async def get_session_history(
             "message": f"获取失败，{e}",
             "data": None,
         }
-
-
-
 
 @router.post("/create_new_session", response_model=BaseResponse[SessionCreateResponseData])
 async def create_new_session(
@@ -91,7 +88,6 @@ async def create_new_session(
     except Exception as e:
         return {"code": 500, "message": f"服务器内部错误: {str(e)}", "data": None}
 
-
 # 删除会话
 @router.delete("/delete-session", response_model=BaseResponse[None])
 async def delete_session(session_id: int, user_id: int = Depends(verify_token)):
@@ -99,7 +95,7 @@ async def delete_session(session_id: int, user_id: int = Depends(verify_token)):
         if not check_session_owner(session_id, user_id):
             return {"code": 403, "message": "无权访问此会话", "data": None}
 
-        if delete_session_service(session_id):
+        if delete_session_service(session_id, str(user_id)):
             return {"code": 200, "message": "会话删除成功", "data": None}
 
         return {"code": 500, "message": "会话删除失败", "data": None}

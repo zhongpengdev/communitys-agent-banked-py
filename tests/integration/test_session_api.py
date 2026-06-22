@@ -18,7 +18,7 @@ def test_get_sessions_returns_200(client, auth_headers):
         "total": 1
     }
 
-    with patch("app.api.session.get_sessions_paginated", return_value=mock_result):
+    with patch("app.api.session.get_sessions_paginated", new_callable=AsyncMock, return_value=mock_result):
         response = client.get("/sessions", headers=auth_headers)
 
     assert response.status_code == 200
@@ -32,7 +32,7 @@ def test_get_sessions_returns_paginated_data(client, auth_headers):
         "total": 5
     }
 
-    with patch("app.api.session.get_sessions_paginated", return_value=mock_result):
+    with patch("app.api.session.get_sessions_paginated", new_callable=AsyncMock, return_value=mock_result):
         response = client.get("/sessions?page=1&page_size=2", headers=auth_headers)
 
     body = response.json()
@@ -43,7 +43,7 @@ def test_get_sessions_returns_paginated_data(client, auth_headers):
 
 
 def test_get_sessions_handles_db_error(client, auth_headers):
-    with patch("app.api.session.get_sessions_paginated", side_effect=Exception("DB error")):
+    with patch("app.api.session.get_sessions_paginated", new_callable=AsyncMock, side_effect=Exception("DB error")):
         response = client.get("/sessions", headers=auth_headers)
 
     body = response.json()

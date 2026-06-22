@@ -42,7 +42,9 @@ async def websocket_chat_handler(
         manager.active_connections[user_id] = websocket
 
     # 每个 WebSocket 连接独占一个 AgentSession
-    # 【修复循环导入】：将导入移到函数内部
+    # 【修复 ContextVar 丢失】：提前将 token 注入上下文，使得 SDK 后台异步轮询任务能够顺利继承此 context
+    set_request_token(token)
+
     from app.agent.runner import AgentSession
     agent = AgentSession(user_id)
     await agent.start()
